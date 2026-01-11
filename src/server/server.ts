@@ -12,13 +12,16 @@ import { AmazonConnector } from './connectors/amazon-connector';
 import { RulesEngine, Rule, StoredTransaction as RulesStoredTransaction } from './ai/rules-engine';
 import { CrossAccountIntelligence, EnrichedTransaction } from './ai/cross-account-intelligence';
 import { AIAssistant, AssistantContext } from './ai/ai-assistant';
+import { AutomationService, getAutomationService, AutomationConfig } from './automation/automation-service';
 
 const app = express();
 
 // AI Services - Singleton instances
 const RULES_FILE = join(__dirname, '../assets/rules.json');
+const AUTOMATION_CONFIG_FILE = join(__dirname, '../assets/automation-config.json');
 const rulesEngine = new RulesEngine();
 let aiAssistant: AIAssistant | null = null;
+let automationService: AutomationService;
 app.use(express.json());
 app.use(cors());
 
@@ -229,9 +232,9 @@ app.get('/transactions', async (req: Request, res: Response) => {
       });
     }
 
-    res.json({ transactions, total });
+    return res.json({ transactions, total });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to get transactions' });
+    return res.status(500).json({ error: 'Failed to get transactions' });
   }
 });
 
@@ -352,8 +355,33 @@ app.delete('/transactions/:id', async (req: Request, res: Response) => {
 
 app.post('/transactions', async (req: Request, res: Response) => {
   try {
-    await saveTransaction(req.body);
-    res.status(200).json({ message: 'Transaction saved successfully' }); // Return a valid JSON response
+    const transaction = req.body;
+
+    // Auto-categorize if enabled and no category provided
+    if (automationService.getConfig().autoCategorize &&
+        (!transaction.category || transaction.category === '' || transaction.category === 'Uncategorized')) {
+      const category = await autoCategorizeTransaction({
+        id: transaction.id,
+        description: transaction.description,
+        amount: transaction.amount,
+        date: transaction.date,
+        category: transaction.category || '',
+        beneficiary: transaction.beneficiary,
+        timestamp: new Date().toISOString(),
+        source: transaction.source
+      });
+      if (category) {
+        transaction.category = category;
+        console.log(`[Automation] Auto-categorized transaction: ${category}`);
+      }
+    }
+
+    await saveTransaction(transaction);
+    res.status(200).json({
+      message: 'Transaction saved successfully',
+      category: transaction.category,
+      autoCategorized: !!transaction.category
+    });
   } catch (error) {
     res.status(500).json({ error: 'Failed to save transaction' });
   }
@@ -807,35 +835,68 @@ app.post('/connectors/:id/fetch', async (req: Request, res: Response) => {
       // Save transactions to storage
       let newCount = 0;
       let duplicateCount = 0;
+      const newTransactionIds: string[] = [];
+
+      // Load existing transactions once for efficiency
+      const existingTransactions = await getStoredTransactions();
+
+      // Build lookup sets for fast duplicate detection
+      const existingExternalIds = new Set(
+        existingTransactions
+          .filter(t => t.source?.externalId)
+          .map(t => `${t.source?.connectorType}-${t.source?.externalId}`)
+      );
+
+      // Also build a secondary lookup by date+amount+description for fallback
+      const existingSignatures = new Set(
+        existingTransactions.map(t => {
+          const dateKey = new Date(t.date).toISOString().split('T')[0];
+          const amountKey = t.amount.toFixed(2);
+          const descKey = t.description.substring(0, 30).toLowerCase().replace(/\s+/g, '');
+          return `${dateKey}-${amountKey}-${descKey}`;
+        })
+      );
 
       for (const tx of fetchResult.transactions) {
-        // Check for duplicates
-        const existingTx = await getStoredTransactions();
-        const isDuplicate = existingTx.some(
-          existing =>
-            Math.abs(new Date(existing.date).getTime() - tx.date.getTime()) < 86400000 &&
-            Math.abs(existing.amount - tx.amount) < 0.01 &&
-            existing.description.includes(tx.description.substring(0, 20))
-        );
-
-        if (!isDuplicate) {
-          await saveTransaction({
-            id: crypto.randomUUID(),
-            date: tx.date.toISOString(),
-            description: tx.description,
-            amount: tx.amount,
-            category: '', // Will be categorized by AI later
-            beneficiary: tx.beneficiary,
-            source: {
-              connectorType: connectorConfig.type,
-              externalId: tx.externalId,
-              importedAt: new Date().toISOString()
-            }
-          });
-          newCount++;
-        } else {
+        // Primary check: externalId (most reliable)
+        const externalIdKey = `${connectorConfig.type}-${tx.externalId}`;
+        if (existingExternalIds.has(externalIdKey)) {
           duplicateCount++;
+          continue;
         }
+
+        // Secondary check: date+amount+description signature
+        const dateKey = tx.date.toISOString().split('T')[0];
+        const amountKey = tx.amount.toFixed(2);
+        const descKey = tx.description.substring(0, 30).toLowerCase().replace(/\s+/g, '');
+        const signature = `${dateKey}-${amountKey}-${descKey}`;
+
+        if (existingSignatures.has(signature)) {
+          duplicateCount++;
+          continue;
+        }
+
+        // Not a duplicate - save it
+        const newId = crypto.randomUUID();
+        await saveTransaction({
+          id: newId,
+          date: tx.date.toISOString(),
+          description: tx.description,
+          amount: tx.amount,
+          category: '', // Will be categorized by automation
+          beneficiary: tx.beneficiary,
+          source: {
+            connectorType: connectorConfig.type,
+            externalId: tx.externalId,
+            importedAt: new Date().toISOString()
+          }
+        });
+        newCount++;
+        newTransactionIds.push(newId);
+
+        // Add to lookup sets to prevent duplicates within same batch
+        existingExternalIds.add(externalIdKey);
+        existingSignatures.add(signature);
       }
 
       // Update connector's last sync info
@@ -846,6 +907,95 @@ app.post('/connectors/:id/fetch', async (req: Request, res: Response) => {
       if (index !== -1) {
         allConnectors[index] = connectorConfig;
         await saveConnectors(allConnectors);
+      }
+
+      // Auto-process ONLY the new transactions (not existing ones)
+      let categorizedCount = 0;
+      let matchedCount = 0;
+      const automationConfig = automationService.getConfig();
+
+      if (newCount > 0 && (automationConfig.autoCategorize || automationConfig.autoMatch)) {
+        console.log(`[Automation] Processing ${newCount} new transactions (IDs: ${newTransactionIds.slice(0, 3).join(', ')}...)`);
+
+        const allTransactions = await getStoredTransactions();
+
+        // Auto-categorize ONLY the new transactions
+        if (automationConfig.autoCategorize) {
+          // Filter to only the new transaction IDs
+          const newTransactions = allTransactions.filter(t => newTransactionIds.includes(t.id));
+
+          if (newTransactions.length > 0) {
+            const enrichedAll: EnrichedTransaction[] = allTransactions.map(t => ({
+              id: t.id,
+              description: t.description,
+              amount: t.amount,
+              date: t.date,
+              category: t.category,
+              beneficiary: t.beneficiary,
+              source: t.source ? {
+                connectorType: t.source.connectorType,
+                externalId: t.source.externalId
+              } : undefined
+            }));
+
+            const results = await automationService.categorizeTransactions(
+              newTransactions.map(t => ({
+                id: t.id,
+                description: t.description,
+                amount: t.amount,
+                date: t.date,
+                category: t.category,
+                beneficiary: t.beneficiary,
+                source: t.source
+              })),
+              enrichedAll
+            );
+
+            for (const result of results) {
+              const txIndex = allTransactions.findIndex(t => t.id === result.transactionId);
+              if (txIndex !== -1) {
+                allTransactions[txIndex].category = result.category;
+                categorizedCount++;
+              }
+            }
+
+            if (categorizedCount > 0) {
+              await writeFile(TRANSACTIONS_FILE, JSON.stringify(allTransactions, null, 2));
+              console.log(`[Automation] Auto-categorized ${categorizedCount} of ${newCount} new transactions`);
+            }
+          }
+        }
+
+        // Auto-match (this can run on all transactions since matching involves pairs)
+        if (automationConfig.autoMatch) {
+          const existingMatches = await getStoredMatches();
+          const matcherTransactions = allTransactions.map(tx => ({
+            ...tx,
+            matchId: tx.matchId,
+            matchInfo: tx.matchInfo ? {
+              ...tx.matchInfo,
+              patternType: tx.matchInfo.patternType as any,
+              source: tx.matchInfo.source as any,
+              confidence: tx.matchInfo.confidence as any
+            } : undefined
+          })) as MatcherStoredTransaction[];
+
+          const matcher = new TransactionMatcher(matcherTransactions, existingMatches);
+          const matchResult = matcher.runAllMatchers();
+
+          if (matchResult.newMatches.length > 0) {
+            const allMatches = [...existingMatches, ...matchResult.newMatches];
+            await saveMatches(allMatches);
+
+            const updatedTransactions = applyMatchesToTransactions(
+              matcherTransactions,
+              matchResult.newMatches
+            );
+            await writeFile(TRANSACTIONS_FILE, JSON.stringify(updatedTransactions, null, 2));
+            matchedCount = matchResult.newMatches.length;
+            console.log(`[Automation] Created ${matchedCount} new matches`);
+          }
+        }
       }
 
       state = {
@@ -860,7 +1010,11 @@ app.post('/connectors/:id/fetch', async (req: Request, res: Response) => {
         message: 'Fetch completed',
         transactionsCount: fetchResult.transactions.length,
         newTransactionsCount: newCount,
-        duplicatesSkipped: duplicateCount
+        duplicatesSkipped: duplicateCount,
+        automation: {
+          categorized: categorizedCount,
+          matched: matchedCount
+        }
       });
 
     } catch (fetchError) {
@@ -1420,6 +1574,60 @@ function getAIAssistant(): AIAssistant {
 // Load rules on startup
 loadRulesIntoEngine().catch(err => console.error('Failed to load rules:', err));
 
+// Initialize automation service
+automationService = getAutomationService(rulesEngine);
+
+// Load automation config
+async function loadAutomationConfig(): Promise<void> {
+  try {
+    const data = await readFile(AUTOMATION_CONFIG_FILE, 'utf8');
+    const config = JSON.parse(data);
+    automationService.setConfig(config);
+  } catch (error) {
+    // Use defaults if no config file
+    console.log('[Automation] Using default configuration');
+  }
+}
+
+async function saveAutomationConfig(config: AutomationConfig): Promise<void> {
+  await writeFile(AUTOMATION_CONFIG_FILE, JSON.stringify(config, null, 2));
+}
+
+// Load automation config on startup
+loadAutomationConfig().catch(err => console.error('Failed to load automation config:', err));
+
+// Auto-categorize a transaction and return the category
+async function autoCategorizeTransaction(transaction: StoredTransaction): Promise<string | null> {
+  const allTransactions = await getStoredTransactions();
+  const enrichedAll: EnrichedTransaction[] = allTransactions.map(t => ({
+    id: t.id,
+    description: t.description,
+    amount: t.amount,
+    date: t.date,
+    category: t.category,
+    beneficiary: t.beneficiary,
+    source: t.source ? {
+      connectorType: t.source.connectorType,
+      externalId: t.source.externalId
+    } : undefined
+  }));
+
+  const result = await automationService.categorizeTransaction(
+    {
+      id: transaction.id,
+      description: transaction.description,
+      amount: transaction.amount,
+      date: transaction.date,
+      category: transaction.category,
+      beneficiary: transaction.beneficiary,
+      source: transaction.source
+    },
+    enrichedAll
+  );
+
+  return result?.category || null;
+}
+
 // ==================== RULES ENGINE ENDPOINTS ====================
 
 // GET /rules - Get all rules
@@ -1880,6 +2088,210 @@ app.post('/import', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error importing data:', error);
     return res.status(500).json({ error: 'Failed to import data' });
+  }
+});
+
+// ==================== AUTOMATION ENDPOINTS ====================
+
+// GET /automation/config - Get automation configuration
+app.get('/automation/config', async (req: Request, res: Response) => {
+  try {
+    const config = automationService.getConfig();
+    return res.json(config);
+  } catch (error) {
+    console.error('Error getting automation config:', error);
+    return res.status(500).json({ error: 'Failed to get automation config' });
+  }
+});
+
+// PUT /automation/config - Update automation configuration
+app.put('/automation/config', async (req: Request, res: Response) => {
+  try {
+    const config = req.body as Partial<AutomationConfig>;
+    automationService.setConfig(config);
+    await saveAutomationConfig(automationService.getConfig());
+    return res.json(automationService.getConfig());
+  } catch (error) {
+    console.error('Error updating automation config:', error);
+    return res.status(500).json({ error: 'Failed to update automation config' });
+  }
+});
+
+// POST /automation/categorize - Auto-categorize uncategorized transactions
+app.post('/automation/categorize', async (req: Request, res: Response) => {
+  try {
+    const transactions = await getStoredTransactions();
+
+    // Find uncategorized transactions
+    const uncategorized = transactions.filter(
+      t => !t.category || t.category === '' || t.category === 'Uncategorized'
+    );
+
+    if (uncategorized.length === 0) {
+      return res.json({
+        success: true,
+        message: 'No uncategorized transactions',
+        categorized: 0
+      });
+    }
+
+    // Convert to enriched format for cross-account intelligence
+    const enrichedAll: EnrichedTransaction[] = transactions.map(t => ({
+      id: t.id,
+      description: t.description,
+      amount: t.amount,
+      date: t.date,
+      category: t.category,
+      beneficiary: t.beneficiary,
+      source: t.source ? {
+        connectorType: t.source.connectorType,
+        externalId: t.source.externalId
+      } : undefined
+    }));
+
+    // Auto-categorize
+    const results = await automationService.categorizeTransactions(
+      uncategorized.map(t => ({
+        id: t.id,
+        description: t.description,
+        amount: t.amount,
+        date: t.date,
+        category: t.category,
+        beneficiary: t.beneficiary,
+        source: t.source
+      })),
+      enrichedAll
+    );
+
+    // Apply categorizations
+    let updatedCount = 0;
+    for (const result of results) {
+      const index = transactions.findIndex(t => t.id === result.transactionId);
+      if (index !== -1) {
+        transactions[index].category = result.category;
+        updatedCount++;
+      }
+    }
+
+    // Save updated transactions
+    if (updatedCount > 0) {
+      await writeFile(TRANSACTIONS_FILE, JSON.stringify(transactions, null, 2));
+    }
+
+    return res.json({
+      success: true,
+      message: `Auto-categorized ${updatedCount} transactions`,
+      categorized: updatedCount,
+      results
+    });
+  } catch (error) {
+    console.error('Error in auto-categorization:', error);
+    return res.status(500).json({ error: 'Failed to auto-categorize' });
+  }
+});
+
+// POST /automation/process-new - Process newly imported transactions (categorize + match)
+app.post('/automation/process-new', async (req: Request, res: Response) => {
+  try {
+    const { transactionIds } = req.body;
+    const transactions = await getStoredTransactions();
+
+    // Get new transactions
+    const newTransactions = transactionIds
+      ? transactions.filter(t => transactionIds.includes(t.id))
+      : transactions.filter(t => !t.category || t.category === '' || t.category === 'Uncategorized');
+
+    if (newTransactions.length === 0) {
+      return res.json({
+        success: true,
+        message: 'No transactions to process',
+        categorized: 0,
+        matched: 0
+      });
+    }
+
+    // Auto-categorize
+    const enrichedAll: EnrichedTransaction[] = transactions.map(t => ({
+      id: t.id,
+      description: t.description,
+      amount: t.amount,
+      date: t.date,
+      category: t.category,
+      beneficiary: t.beneficiary,
+      source: t.source ? {
+        connectorType: t.source.connectorType,
+        externalId: t.source.externalId
+      } : undefined
+    }));
+
+    const categorizationResults = await automationService.categorizeTransactions(
+      newTransactions.map(t => ({
+        id: t.id,
+        description: t.description,
+        amount: t.amount,
+        date: t.date,
+        category: t.category,
+        beneficiary: t.beneficiary,
+        source: t.source
+      })),
+      enrichedAll
+    );
+
+    // Apply categorizations
+    let categorizedCount = 0;
+    for (const result of categorizationResults) {
+      const index = transactions.findIndex(t => t.id === result.transactionId);
+      if (index !== -1) {
+        transactions[index].category = result.category;
+        categorizedCount++;
+      }
+    }
+
+    // Save transactions before matching
+    await writeFile(TRANSACTIONS_FILE, JSON.stringify(transactions, null, 2));
+
+    // Run matching if enabled
+    let matchedCount = 0;
+    const config = automationService.getConfig();
+    if (config.autoMatch) {
+      const existingMatches = await getStoredMatches();
+      const matcherTransactions = transactions.map(tx => ({
+        ...tx,
+        matchId: tx.matchId,
+        matchInfo: tx.matchInfo ? {
+          ...tx.matchInfo,
+          patternType: tx.matchInfo.patternType as any,
+          source: tx.matchInfo.source as any,
+          confidence: tx.matchInfo.confidence as any
+        } : undefined
+      })) as MatcherStoredTransaction[];
+
+      const matcher = new TransactionMatcher(matcherTransactions, existingMatches);
+      const matchResult = matcher.runAllMatchers();
+
+      if (matchResult.newMatches.length > 0) {
+        const allMatches = [...existingMatches, ...matchResult.newMatches];
+        await saveMatches(allMatches);
+
+        const updatedTransactions = applyMatchesToTransactions(
+          matcherTransactions,
+          matchResult.newMatches
+        );
+        await writeFile(TRANSACTIONS_FILE, JSON.stringify(updatedTransactions, null, 2));
+        matchedCount = matchResult.newMatches.length;
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: `Processed ${newTransactions.length} transactions`,
+      categorized: categorizedCount,
+      matched: matchedCount,
+      categorizationResults
+    });
+  } catch (error) {
+    console.error('Error processing new transactions:', error);
+    return res.status(500).json({ error: 'Failed to process transactions' });
   }
 });
 

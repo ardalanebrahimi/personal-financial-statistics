@@ -428,30 +428,50 @@ export class N26Connector extends BaseConnector {
       password: this.credentials!.pin
     });
 
-    const response = await fetch(`${N26_API_BASE}/oauth/token`, {
+    console.log('[N26] Requesting token...');
+
+    const response = await fetch(`${N26_API_BASE}/oauth2/token`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
         'Authorization': `Basic ${Buffer.from(`${N26_CLIENT_ID}:${N26_CLIENT_SECRET}`).toString('base64')}`,
         'Accept': 'application/json',
-        'device-token': this.deviceToken
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 13) N26/3.0',
+        'device-token': this.deviceToken,
+        'x-device-os': 'android',
+        'x-device-id': this.deviceToken
       },
       body: params.toString()
     });
 
-    const data = await response.json();
+    console.log(`[N26] Response status: ${response.status}`);
 
-    // Check for MFA requirement
-    if (data.mfaToken || (data.error === 'mfa_required')) {
-      return {
-        mfaToken: data.mfaToken || data.userMessage?.token,
-        hostUrl: data.hostUrl
-      };
+    const data = await response.json();
+    console.log('[N26] Response data:', JSON.stringify(data, null, 2));
+
+    // Check for MFA requirement - N26 uses different response formats
+    if (data.mfaToken || data.error === 'mfa_required' || response.status === 403) {
+      const mfaToken = data.mfaToken || data.userMessage?.token || data.token;
+      if (mfaToken) {
+        return {
+          mfaToken,
+          hostUrl: data.hostUrl
+        };
+      }
+      // N26 might return a different format - try to extract MFA info
+      if (data.detail || data.title) {
+        throw new Error(data.detail || data.title || 'N26 requires MFA but token not found in response');
+      }
     }
 
     // Check for error
     if (data.error) {
       throw new Error(data.error_description || data.error);
+    }
+
+    // Check for status-based errors
+    if (response.status !== 200) {
+      throw new Error(`N26 API returned status ${response.status}: ${JSON.stringify(data)}`);
     }
 
     return data as N26TokenResponse;
@@ -472,18 +492,26 @@ export class N26Connector extends BaseConnector {
       params.set('otp', code);
     }
 
-    const response = await fetch(`${N26_API_BASE}/oauth/token`, {
+    console.log('[N26] Completing MFA...');
+
+    const response = await fetch(`${N26_API_BASE}/oauth2/token`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
         'Authorization': `Basic ${Buffer.from(`${N26_CLIENT_ID}:${N26_CLIENT_SECRET}`).toString('base64')}`,
         'Accept': 'application/json',
-        'device-token': this.deviceToken
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 13) N26/3.0',
+        'device-token': this.deviceToken,
+        'x-device-os': 'android',
+        'x-device-id': this.deviceToken
       },
       body: params.toString()
     });
 
+    console.log(`[N26] MFA response status: ${response.status}`);
+
     const data = await response.json();
+    console.log('[N26] MFA response data:', JSON.stringify(data, null, 2));
 
     // Check for pending authorization (app not yet approved)
     if (data.error === 'authorization_pending') {

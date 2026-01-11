@@ -46,6 +46,10 @@ import { MatIconModule } from '@angular/material/icon';
               <mat-icon>smart_toy</mat-icon>
               AI Assistant
             </a>
+            <a mat-button routerLink="/settings" routerLinkActive="active">
+              <mat-icon>settings</mat-icon>
+              Settings
+            </a>
             <a mat-button routerLink="/help" routerLinkActive="active">
               <mat-icon>help_outline</mat-icon>
               Help

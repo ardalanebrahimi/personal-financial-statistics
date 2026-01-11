@@ -147,11 +147,11 @@ import { Transaction, Category } from '../../core/models/transaction.model';
           </div>
           <div class="detail-row" *ngIf="transaction.source">
             <span class="label">Source:</span>
-            <span class="value">{{ transaction.source?.connectorType }}</span>
+            <span class="value">{{ transaction.source.connectorType }}</span>
           </div>
-          <div class="detail-row" *ngIf="transaction.source?.externalId">
+          <div class="detail-row" *ngIf="transaction.source && transaction.source.externalId">
             <span class="label">External ID:</span>
-            <span class="value">{{ transaction.source?.externalId }}</span>
+            <span class="value">{{ transaction.source.externalId }}</span>
           </div>
           <div class="detail-row" *ngIf="transaction.transactionType">
             <span class="label">Type:</span>

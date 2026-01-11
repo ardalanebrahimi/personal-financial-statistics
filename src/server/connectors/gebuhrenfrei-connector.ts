@@ -42,8 +42,8 @@ const SELECTORS = {
   loginButton: 'button[type="submit"], .login-button, #loginButton',
 
   // MFA page
-  mfaSmsOption: '.sms-option, [data-method="sms"], button:has-text("SMS")',
-  mfaAppOption: '.app-option, [data-method="app"], button:has-text("App")',
+  mfaSmsOption: '.sms-option, [data-method="sms"], button[data-method="sms"]',
+  mfaAppOption: '.app-option, [data-method="app"], button[data-method="app"]',
   mfaCodeInput: '#code, input[name="code"], input[name="otp"], .otp-input',
   mfaSubmitButton: 'button[type="submit"], .submit-button, #verifyButton',
   mfaMessage: '.mfa-message, .verification-message, .otp-description',
@@ -73,7 +73,7 @@ const SELECTORS = {
 
   // Pagination
   nextPageButton: '.pagination-next, .next-page, [aria-label="Next"]',
-  loadMoreButton: '.load-more, button:has-text("Mehr laden")'
+  loadMoreButton: '.load-more, [class*="load-more"], button.more'
 };
 
 interface PendingOperation {

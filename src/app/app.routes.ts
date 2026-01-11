@@ -38,6 +38,10 @@ export const routes: Routes = [
     loadComponent: () => import('./features/help/help.component').then(m => m.HelpComponent)
   },
   {
+    path: 'settings',
+    loadComponent: () => import('./features/settings/settings.component').then(m => m.SettingsComponent)
+  },
+  {
     path: '',
     redirectTo: 'dashboard',
     pathMatch: 'full'

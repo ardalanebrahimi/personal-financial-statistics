@@ -644,41 +644,173 @@ export class SparkasseConnector extends BaseConnector {
   private parseStatements(statements: any[]): FetchedTransaction[] {
     const transactions: FetchedTransaction[] = [];
 
+    console.log(`[Sparkasse] Parsing ${statements.length} statements`);
+
     for (const statement of statements) {
+      // Debug: Log statement structure
+      console.log('[Sparkasse] Statement keys:', Object.keys(statement));
+
       // Handle MT940 format (most common)
-      if (statement.transactions) {
+      if (statement.transactions && Array.isArray(statement.transactions)) {
+        console.log(`[Sparkasse] Found ${statement.transactions.length} MT940 transactions`);
+
         for (const tx of statement.transactions) {
+          // Debug: Log first transaction structure
+          if (transactions.length === 0) {
+            console.log('[Sparkasse] Sample MT940 transaction keys:', Object.keys(tx));
+            console.log('[Sparkasse] Sample MT940 transaction:', JSON.stringify(tx, null, 2).substring(0, 500));
+          }
+
+          // Extract date - try multiple fields
+          const txDate = tx.date || tx.bookingDate || tx.valueDate || tx.entryDate;
+          const parsedDate = txDate ? new Date(txDate) : null;
+
+          // Extract beneficiary - try multiple fields
+          const beneficiary = tx.partnerName || tx.ultimatePartnerName ||
+                             tx.creditorName || tx.debtorName ||
+                             tx.remittanceCreditorName || tx.remittanceDebtorName ||
+                             this.extractBeneficiaryFromPurpose(tx.purpose);
+
+          // Generate stable external ID
+          const dateStr = parsedDate ? parsedDate.toISOString().split('T')[0] : 'nodate';
+          const externalId = tx.reference || tx.transactionReference ||
+                            tx.endToEndReference || tx.mandateReference ||
+                            `${dateStr}-${tx.amount}-${this.hashString(tx.purpose || tx.description || '')}`;
+
           const transaction: FetchedTransaction = {
-            externalId: tx.reference || `${tx.date?.toISOString()}-${tx.amount}-${Math.random()}`,
-            date: tx.date || new Date(),
+            externalId,
+            date: parsedDate || new Date(),
             description: this.buildDescription(tx),
             amount: tx.amount || 0,
-            beneficiary: tx.partnerName || tx.ultimatePartnerName,
+            beneficiary,
             rawData: tx
           };
-          transactions.push(transaction);
+
+          // Only add if we have a valid date (not current time)
+          if (parsedDate) {
+            transactions.push(transaction);
+          } else {
+            console.warn('[Sparkasse] Skipping transaction without valid date:', tx);
+          }
         }
       }
 
       // Handle CAMT format
-      if (statement.entries) {
+      if (statement.entries && Array.isArray(statement.entries)) {
+        console.log(`[Sparkasse] Found ${statement.entries.length} CAMT entries`);
+
         for (const entry of statement.entries) {
+          // Debug: Log first entry structure
+          if (transactions.length === 0) {
+            console.log('[Sparkasse] Sample CAMT entry keys:', Object.keys(entry));
+            console.log('[Sparkasse] Sample CAMT entry:', JSON.stringify(entry, null, 2).substring(0, 500));
+          }
+
+          // Extract date
+          const entryDate = entry.bookingDate || entry.valueDate || entry.date;
+          const parsedDate = entryDate ? new Date(entryDate) : null;
+
+          // Extract beneficiary
+          const beneficiary = entry.debtorName || entry.creditorName ||
+                             entry.ultimateDebtorName || entry.ultimateCreditorName ||
+                             this.extractBeneficiaryFromPurpose(entry.remittanceInformation);
+
+          // Generate stable external ID
+          const dateStr = parsedDate ? parsedDate.toISOString().split('T')[0] : 'nodate';
+          const externalId = entry.reference || entry.accountServicerReference ||
+                            entry.endToEndReference || entry.transactionId ||
+                            `${dateStr}-${entry.amount}-${this.hashString(entry.remittanceInformation || '')}`;
+
           const transaction: FetchedTransaction = {
-            externalId: entry.reference || entry.accountServicerReference ||
-                       `${entry.bookingDate?.toISOString()}-${entry.amount}-${Math.random()}`,
-            date: entry.bookingDate || entry.valueDate || new Date(),
-            description: entry.remittanceInformation || entry.additionalInfo || '',
+            externalId,
+            date: parsedDate || new Date(),
+            description: entry.remittanceInformation || entry.additionalInfo || 'No description',
             amount: entry.creditDebitIndicator === 'CRDT' ?
                    Math.abs(entry.amount) : -Math.abs(entry.amount),
-            beneficiary: entry.debtorName || entry.creditorName,
+            beneficiary,
             rawData: entry
           };
-          transactions.push(transaction);
+
+          if (parsedDate) {
+            transactions.push(transaction);
+          } else {
+            console.warn('[Sparkasse] Skipping CAMT entry without valid date:', entry);
+          }
+        }
+      }
+
+      // Handle raw booked/pending format (some FinTS responses)
+      if (statement.booked && Array.isArray(statement.booked)) {
+        console.log(`[Sparkasse] Found ${statement.booked.length} booked transactions`);
+
+        for (const tx of statement.booked) {
+          const txDate = tx.bookingDate || tx.valueDate || tx.date;
+          const parsedDate = txDate ? new Date(txDate) : null;
+
+          const beneficiary = tx.creditorName || tx.debtorName ||
+                             tx.remittanceCreditorName || tx.ultimateCreditorName ||
+                             this.extractBeneficiaryFromPurpose(tx.remittanceInformationUnstructured);
+
+          const dateStr = parsedDate ? parsedDate.toISOString().split('T')[0] : 'nodate';
+          const externalId = tx.transactionId || tx.internalTransactionId ||
+                            `${dateStr}-${tx.transactionAmount?.amount || tx.amount}-${this.hashString(tx.remittanceInformationUnstructured || '')}`;
+
+          const amount = tx.transactionAmount?.amount || tx.amount || 0;
+          const amountValue = typeof amount === 'string' ? parseFloat(amount) : amount;
+
+          const transaction: FetchedTransaction = {
+            externalId,
+            date: parsedDate || new Date(),
+            description: tx.remittanceInformationUnstructured || tx.additionalInformation || 'No description',
+            amount: amountValue,
+            beneficiary,
+            rawData: tx
+          };
+
+          if (parsedDate) {
+            transactions.push(transaction);
+          }
         }
       }
     }
 
+    console.log(`[Sparkasse] Parsed ${transactions.length} valid transactions`);
     return transactions;
+  }
+
+  /**
+   * Extract beneficiary from purpose/remittance string
+   */
+  private extractBeneficiaryFromPurpose(purpose?: string): string | undefined {
+    if (!purpose) return undefined;
+
+    // Common patterns in German bank statements
+    const patterns = [
+      /(?:Auftraggeber|Zahlungsempfänger|Empfänger|Begünstigter):\s*([^,\n]+)/i,
+      /(?:von|an|für)\s+([A-Za-z][A-Za-z\s\.]+(?:GmbH|AG|KG|e\.V\.|S\.a\.r\.l\.|Ltd|Inc))/i,
+    ];
+
+    for (const pattern of patterns) {
+      const match = purpose.match(pattern);
+      if (match && match[1]) {
+        return match[1].trim();
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Simple hash function for generating stable IDs
+   */
+  private hashString(str: string): string {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32bit integer
+    }
+    return Math.abs(hash).toString(36);
   }
 
   /**
