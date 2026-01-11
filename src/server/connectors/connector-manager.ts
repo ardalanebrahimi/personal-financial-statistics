@@ -5,6 +5,7 @@
 
 import { BaseConnector, ConnectorCredentials, DateRange, FetchedTransaction } from './base-connector';
 import { SparkasseConnector } from './sparkasse-connector';
+import { N26Connector } from './n26-connector';
 
 export type ConnectorType = 'sparkasse' | 'n26' | 'gebuhrenfrei' | 'amazon';
 
@@ -30,13 +31,13 @@ class ConnectorManager {
         connector = new SparkasseConnector(id);
         break;
       case 'n26':
-        // TODO: Implement in Phase 4
-        throw new Error('N26 connector not yet implemented');
+        connector = new N26Connector(id);
+        break;
       case 'gebuhrenfrei':
-        // TODO: Implement in Phase 5
+        // TODO: Implement in Phase 6
         throw new Error('Gebührfrei connector not yet implemented');
       case 'amazon':
-        // TODO: Implement in Phase 6
+        // TODO: Implement in Phase 7
         throw new Error('Amazon connector not yet implemented');
       default:
         throw new Error(`Unknown connector type: ${type}`);
@@ -109,8 +110,8 @@ class ConnectorManager {
   isImplemented(type: ConnectorType): boolean {
     switch (type) {
       case 'sparkasse':
-        return true;
       case 'n26':
+        return true;
       case 'gebuhrenfrei':
       case 'amazon':
         return false;

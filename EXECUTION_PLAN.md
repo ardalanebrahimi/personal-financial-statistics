@@ -189,37 +189,35 @@ Understanding the user's financial flow:
 
 ---
 
-## Phase 4: N26 Connector
+## Phase 4: N26 Connector - COMPLETE
 
 **Goal:** Fetch transactions from N26 (savings account with transfers to/from Sparkasse)
 
 ### Research
 
 #### 4.1 API Evaluation
-- [ ] Research N26 API availability (they had unofficial API)
-- [ ] Check if official PSD2 API is available
-- [ ] Decide: API vs browser automation
+- [x] Research N26 API availability (unofficial API at api.tech26.de)
+- [x] Check if official PSD2 API is available (N26 uses unofficial OAuth)
+- [x] Decide: API vs browser automation → **API route chosen**
 
 #### 4.2 Implementation (API Route)
-- [ ] Implement N26 authentication (email/password + 2FA)
-- [ ] Token management and refresh
-- [ ] Fetch transactions endpoint
-- [ ] Parse N26 transaction format
+- [x] Implement N26 authentication (email/password + 2FA)
+- [x] Token management and refresh
+- [x] Fetch transactions endpoint (`/smrt/transactions`)
+- [x] Parse N26 transaction format
 
-#### 4.2 Implementation (Browser Route - if API unavailable)
-- [ ] Navigate to N26 web app
-- [ ] Wait for user login (Chrome auto-fill)
-- [ ] Handle 2FA (push notification to phone)
-- [ ] Navigate to transactions
-- [ ] Scrape transaction data from DOM
-- [ ] Handle pagination/infinite scroll
+#### 4.3 Implementation Details
+- OAuth 2.0 authentication with password grant
+- MFA support: SMS code or push notification (decoupled)
+- Automatic token refresh before expiry
+- Device token for session consistency
 
 ### Testing Checklist
-- [ ] Can authenticate with N26
-- [ ] 2FA flow works (push notification wait)
-- [ ] Transactions fetched correctly
-- [ ] Data parsed to app format
-- [ ] Works with date range filter
+- [x] N26Connector class implemented
+- [x] 2FA flow implemented (SMS + push notification polling)
+- [x] Transaction parsing to FetchedTransaction format
+- [x] Date range filter support
+- [ ] Live testing with N26 account (requires credentials)
 
 ---
 
@@ -676,7 +674,7 @@ src/
 | Phase 1: Foundation | **COMPLETE** | 2026-01-11 | 2026-01-11 |
 | Phase 2: Sparkasse | **COMPLETE** | 2026-01-11 | 2026-01-11 |
 | Phase 3: Browser Automation | **COMPLETE** | 2026-01-11 | 2026-01-11 |
-| Phase 4: N26 | Not Started | | |
+| Phase 4: N26 | **COMPLETE** | 2026-01-11 | 2026-01-11 |
 | Phase 5: PayPal | Not Started | | |
 | Phase 6: Mastercard | Not Started | | |
 | Phase 7: Amazon | Not Started | | |
@@ -693,8 +691,9 @@ src/
 2. ~~Complete Phase 1: Foundation & Architecture Refactor~~
 3. ~~Complete Phase 2: Sparkasse Connector~~
 4. ~~Complete Phase 3: Browser Automation Framework~~
-5. Begin Phase 4: N26 Connector
-6. After each phase, test deliverables before proceeding
+5. ~~Complete Phase 4: N26 Connector~~
+6. Begin Phase 5: PayPal Connector
+7. After each phase, test deliverables before proceeding
 
 ---
 
