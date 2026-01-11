@@ -2,6 +2,10 @@ import { Routes } from '@angular/router';
 
 export const routes: Routes = [
   {
+    path: 'connectors',
+    loadComponent: () => import('./features/connectors/connectors.component').then(m => m.ConnectorsComponent)
+  },
+  {
     path: 'upload',
     loadComponent: () => import('./features/upload/upload.component').then(m => m.UploadComponent)
   },
@@ -15,7 +19,7 @@ export const routes: Routes = [
   },
   {
     path: '',
-    redirectTo: 'upload',
+    redirectTo: 'connectors',
     pathMatch: 'full'
   }
 ];

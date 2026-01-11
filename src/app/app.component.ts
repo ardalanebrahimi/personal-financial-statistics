@@ -14,15 +14,19 @@ import { MatIconModule } from '@angular/material/icon';
         <div class="nav-content">
           <h2>Financial Analytics</h2>
           <nav>
-            <a mat-button routerLink="/upload">
+            <a mat-button routerLink="/connectors" routerLinkActive="active">
+              <mat-icon>account_balance</mat-icon>
+              Connectors
+            </a>
+            <a mat-button routerLink="/upload" routerLinkActive="active">
               <mat-icon>upload</mat-icon>
               Upload Data
             </a>
-            <a mat-button routerLink="/categories">
+            <a mat-button routerLink="/categories" routerLinkActive="active">
               <mat-icon>category</mat-icon>
               Categories
             </a>
-            <a mat-button routerLink="/analytics">
+            <a mat-button routerLink="/analytics" routerLinkActive="active">
               <mat-icon>analytics</mat-icon>
               Analytics
             </a>
@@ -57,6 +61,10 @@ import { MatIconModule } from '@angular/material/icon';
       display: flex;
       flex-direction: column;
       gap: 0.5rem;
+    }
+    nav a.active {
+      background-color: rgba(0, 0, 0, 0.04);
+      font-weight: 500;
     }
     main {
       padding: 1rem;

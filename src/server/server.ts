@@ -11,6 +11,82 @@ app.use(cors());
 
 const CATEGORIES_FILE = join(__dirname, '../assets/categories.json');
 const TRANSACTIONS_FILE = join(__dirname, '../assets/transactions.json');
+const CONNECTORS_FILE = join(__dirname, '../assets/connectors.json');
+
+// ==================== CONNECTOR TYPES ====================
+
+enum ConnectorStatus {
+  DISCONNECTED = 'disconnected',
+  CONNECTING = 'connecting',
+  MFA_REQUIRED = 'mfa_required',
+  CONNECTED = 'connected',
+  FETCHING = 'fetching',
+  ERROR = 'error'
+}
+
+enum ConnectorType {
+  SPARKASSE = 'sparkasse',
+  N26 = 'n26',
+  GEBUHRENFREI = 'gebuhrenfrei',
+  AMAZON = 'amazon'
+}
+
+interface ConnectorConfig {
+  id: string;
+  type: ConnectorType;
+  name: string;
+  enabled: boolean;
+  bankCode?: string;
+  accountId?: string;
+  lastSyncAt?: string;
+  lastSyncStatus?: 'success' | 'partial' | 'failed';
+  lastSyncError?: string;
+}
+
+interface ConnectorState {
+  config: ConnectorConfig;
+  status: ConnectorStatus;
+  statusMessage?: string;
+  mfaChallenge?: {
+    type: string;
+    message: string;
+    imageData?: string;
+    expiresAt?: string;
+  };
+}
+
+// In-memory connector states (not persisted)
+const connectorStates: Map<string, ConnectorState> = new Map();
+
+// ==================== CONNECTOR HELPERS ====================
+
+async function getStoredConnectors(): Promise<ConnectorConfig[]> {
+  try {
+    const data = await readFile(CONNECTORS_FILE, 'utf8');
+    const parsed = JSON.parse(data);
+    return parsed.connectors || [];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return [];
+    }
+    throw error;
+  }
+}
+
+async function saveConnectors(connectors: ConnectorConfig[]) {
+  await writeFile(CONNECTORS_FILE, JSON.stringify({ connectors }, null, 2));
+}
+
+function getConnectorState(config: ConnectorConfig): ConnectorState {
+  const existing = connectorStates.get(config.id);
+  if (existing) {
+    return { ...existing, config };
+  }
+  return {
+    config,
+    status: ConnectorStatus.DISCONNECTED
+  };
+}
 
 interface StoredTransaction {
   id: string;
@@ -226,6 +302,239 @@ app.put('/transactions/:id', async (req: Request, res: Response) => {
     }
   } catch (error) {
     res.status(500).json({ error: 'Failed to update transaction' });
+  }
+});
+
+// ==================== CONNECTOR ENDPOINTS ====================
+
+// GET /connectors - List all connectors with their current status
+app.get('/connectors', async (req: Request, res: Response) => {
+  try {
+    const connectors = await getStoredConnectors();
+    const states = connectors.map(config => getConnectorState(config));
+    res.json({ connectors: states });
+  } catch (error) {
+    console.error('Error getting connectors:', error);
+    res.status(500).json({ error: 'Failed to get connectors' });
+  }
+});
+
+// POST /connectors - Create a new connector configuration
+app.post('/connectors', async (req: Request, res: Response) => {
+  try {
+    const connectors = await getStoredConnectors();
+    const newConnector: ConnectorConfig = {
+      id: crypto.randomUUID(),
+      type: req.body.type,
+      name: req.body.name,
+      enabled: true,
+      bankCode: req.body.bankCode,
+      accountId: req.body.accountId
+    };
+    connectors.push(newConnector);
+    await saveConnectors(connectors);
+
+    const state = getConnectorState(newConnector);
+    res.status(201).json(state);
+  } catch (error) {
+    console.error('Error creating connector:', error);
+    res.status(500).json({ error: 'Failed to create connector' });
+  }
+});
+
+// DELETE /connectors/:id - Delete a connector
+app.delete('/connectors/:id', async (req: Request, res: Response) => {
+  try {
+    const connectors = await getStoredConnectors();
+    const filtered = connectors.filter(c => c.id !== req.params['id']);
+    if (filtered.length === connectors.length) {
+      return res.status(404).json({ error: 'Connector not found' });
+    }
+    await saveConnectors(filtered);
+    connectorStates.delete(req.params['id']);
+    return res.sendStatus(200);
+  } catch (error) {
+    console.error('Error deleting connector:', error);
+    return res.status(500).json({ error: 'Failed to delete connector' });
+  }
+});
+
+// POST /connectors/:id/connect - Initiate connection to the financial service
+app.post('/connectors/:id/connect', async (req: Request, res: Response) => {
+  try {
+    const connectors = await getStoredConnectors();
+    const connector = connectors.find(c => c.id === req.params['id']);
+
+    if (!connector) {
+      return res.status(404).json({ error: 'Connector not found' });
+    }
+
+    // Update state to connecting
+    const state: ConnectorState = {
+      config: connector,
+      status: ConnectorStatus.CONNECTING,
+      statusMessage: 'Initiating connection...'
+    };
+    connectorStates.set(connector.id, state);
+
+    // TODO: Implement actual connector logic in Phase 2+
+    // For now, simulate a connection that requires MFA
+    setTimeout(() => {
+      const updatedState: ConnectorState = {
+        config: connector,
+        status: ConnectorStatus.MFA_REQUIRED,
+        statusMessage: 'MFA verification required',
+        mfaChallenge: {
+          type: 'push',
+          message: 'Please confirm the login in your banking app or enter the TAN code.',
+          expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString()
+        }
+      };
+      connectorStates.set(connector.id, updatedState);
+    }, 1000);
+
+    return res.json(state);
+  } catch (error) {
+    console.error('Error connecting:', error);
+    return res.status(500).json({ error: 'Failed to initiate connection' });
+  }
+});
+
+// POST /connectors/:id/mfa - Submit MFA code
+app.post('/connectors/:id/mfa', async (req: Request, res: Response) => {
+  try {
+    const connectors = await getStoredConnectors();
+    const connector = connectors.find(c => c.id === req.params['id']);
+
+    if (!connector) {
+      return res.status(404).json({ error: 'Connector not found' });
+    }
+
+    const currentState = connectorStates.get(connector.id);
+    if (!currentState || currentState.status !== ConnectorStatus.MFA_REQUIRED) {
+      return res.status(400).json({ error: 'No MFA challenge pending' });
+    }
+
+    const { code } = req.body;
+    if (!code) {
+      return res.status(400).json({ error: 'MFA code required' });
+    }
+
+    // TODO: Implement actual MFA verification in Phase 2+
+    // For now, accept any code and mark as connected
+    const state: ConnectorState = {
+      config: connector,
+      status: ConnectorStatus.CONNECTED,
+      statusMessage: 'Connected successfully'
+    };
+    connectorStates.set(connector.id, state);
+
+    return res.json(state);
+  } catch (error) {
+    console.error('Error submitting MFA:', error);
+    return res.status(500).json({ error: 'Failed to verify MFA' });
+  }
+});
+
+// POST /connectors/:id/fetch - Fetch transactions for date range
+app.post('/connectors/:id/fetch', async (req: Request, res: Response) => {
+  try {
+    const connectors = await getStoredConnectors();
+    const connector = connectors.find(c => c.id === req.params['id']);
+
+    if (!connector) {
+      return res.status(404).json({ error: 'Connector not found' });
+    }
+
+    const currentState = connectorStates.get(connector.id);
+    if (!currentState || currentState.status !== ConnectorStatus.CONNECTED) {
+      return res.status(400).json({ error: 'Connector not connected. Please connect first.' });
+    }
+
+    const { startDate, endDate } = req.body;
+    if (!startDate || !endDate) {
+      return res.status(400).json({ error: 'Date range required (startDate, endDate)' });
+    }
+
+    // Update state to fetching
+    const fetchingState: ConnectorState = {
+      config: connector,
+      status: ConnectorStatus.FETCHING,
+      statusMessage: 'Fetching transactions...'
+    };
+    connectorStates.set(connector.id, fetchingState);
+
+    // TODO: Implement actual fetch logic in Phase 2+
+    // For now, simulate a fetch operation
+    setTimeout(async () => {
+      // Update connector's last sync info
+      connector.lastSyncAt = new Date().toISOString();
+      connector.lastSyncStatus = 'success';
+      const allConnectors = await getStoredConnectors();
+      const index = allConnectors.findIndex(c => c.id === connector.id);
+      if (index !== -1) {
+        allConnectors[index] = connector;
+        await saveConnectors(allConnectors);
+      }
+
+      const state: ConnectorState = {
+        config: connector,
+        status: ConnectorStatus.CONNECTED,
+        statusMessage: 'Fetch completed'
+      };
+      connectorStates.set(connector.id, state);
+    }, 2000);
+
+    return res.json({
+      message: 'Fetch started',
+      dateRange: { startDate, endDate }
+    });
+  } catch (error) {
+    console.error('Error fetching transactions:', error);
+    return res.status(500).json({ error: 'Failed to fetch transactions' });
+  }
+});
+
+// POST /connectors/:id/disconnect - Disconnect from the financial service
+app.post('/connectors/:id/disconnect', async (req: Request, res: Response) => {
+  try {
+    const connectors = await getStoredConnectors();
+    const connector = connectors.find(c => c.id === req.params['id']);
+
+    if (!connector) {
+      return res.status(404).json({ error: 'Connector not found' });
+    }
+
+    // TODO: Implement actual disconnect logic in Phase 2+
+    const state: ConnectorState = {
+      config: connector,
+      status: ConnectorStatus.DISCONNECTED,
+      statusMessage: 'Disconnected'
+    };
+    connectorStates.set(connector.id, state);
+
+    return res.json(state);
+  } catch (error) {
+    console.error('Error disconnecting:', error);
+    return res.status(500).json({ error: 'Failed to disconnect' });
+  }
+});
+
+// GET /connectors/:id/status - Get current status of a connector
+app.get('/connectors/:id/status', async (req: Request, res: Response) => {
+  try {
+    const connectors = await getStoredConnectors();
+    const connector = connectors.find(c => c.id === req.params['id']);
+
+    if (!connector) {
+      return res.status(404).json({ error: 'Connector not found' });
+    }
+
+    const state = getConnectorState(connector);
+    return res.json(state);
+  } catch (error) {
+    console.error('Error getting connector status:', error);
+    return res.status(500).json({ error: 'Failed to get connector status' });
   }
 });
 
