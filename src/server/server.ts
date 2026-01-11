@@ -9,8 +9,16 @@ import type { ConnectorType as CMConnectorType } from './connectors/connector-ma
 import { getBrowserService } from './browser';
 import { TransactionMatcher, applyMatchesToTransactions, TransactionMatch, MatchSuggestion, StoredTransaction as MatcherStoredTransaction } from './matching/matcher';
 import { AmazonConnector } from './connectors/amazon-connector';
+import { RulesEngine, Rule, StoredTransaction as RulesStoredTransaction } from './ai/rules-engine';
+import { CrossAccountIntelligence, EnrichedTransaction } from './ai/cross-account-intelligence';
+import { AIAssistant, AssistantContext } from './ai/ai-assistant';
 
 const app = express();
+
+// AI Services - Singleton instances
+const RULES_FILE = join(__dirname, '../assets/rules.json');
+const rulesEngine = new RulesEngine();
+let aiAssistant: AIAssistant | null = null;
 app.use(express.json());
 app.use(cors());
 
@@ -1331,6 +1339,403 @@ app.get('/matching/:id', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error getting match:', error);
     return res.status(500).json({ error: 'Failed to get match' });
+  }
+});
+
+// ==================== AI HELPERS ====================
+
+async function getStoredRules(): Promise<Rule[]> {
+  try {
+    const data = await readFile(RULES_FILE, 'utf8');
+    const parsed = JSON.parse(data);
+    return parsed.rules || [];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return [];
+    }
+    throw error;
+  }
+}
+
+async function saveRules(rules: Rule[]): Promise<void> {
+  await writeFile(RULES_FILE, JSON.stringify({ rules }, null, 2));
+}
+
+async function loadRulesIntoEngine(): Promise<void> {
+  const rules = await getStoredRules();
+  rulesEngine.setRules(rules);
+}
+
+async function getCategories(): Promise<{ id: string; name: string; color?: string }[]> {
+  try {
+    const data = await readFile(CATEGORIES_FILE, 'utf8');
+    const parsed = JSON.parse(data);
+    return parsed.categories || [];
+  } catch {
+    return [];
+  }
+}
+
+function getAIAssistant(): AIAssistant {
+  if (!aiAssistant) {
+    // Get API key from environment
+    const apiKey = process.env['OPENAI_API_KEY'] || '';
+    aiAssistant = new AIAssistant(apiKey);
+  }
+  return aiAssistant;
+}
+
+// Load rules on startup
+loadRulesIntoEngine().catch(err => console.error('Failed to load rules:', err));
+
+// ==================== RULES ENGINE ENDPOINTS ====================
+
+// GET /rules - Get all rules
+app.get('/rules', async (req: Request, res: Response) => {
+  try {
+    const rules = rulesEngine.getRules();
+    const stats = rulesEngine.getStats();
+    return res.json({ rules, stats });
+  } catch (error) {
+    console.error('Error getting rules:', error);
+    return res.status(500).json({ error: 'Failed to get rules' });
+  }
+});
+
+// POST /rules - Create a new rule
+app.post('/rules', async (req: Request, res: Response) => {
+  try {
+    const rule = req.body as Rule;
+
+    // Generate ID if not provided
+    if (!rule.id) {
+      rule.id = `rule-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    }
+    rule.createdAt = rule.createdAt || new Date().toISOString();
+    rule.updatedAt = new Date().toISOString();
+
+    rulesEngine.addRule(rule);
+    await saveRules(rulesEngine.getRules());
+
+    return res.status(201).json(rule);
+  } catch (error) {
+    console.error('Error creating rule:', error);
+    return res.status(500).json({ error: 'Failed to create rule' });
+  }
+});
+
+// PUT /rules/:id - Update a rule
+app.put('/rules/:id', async (req: Request, res: Response) => {
+  try {
+    const ruleId = req.params['id'];
+    const updates = req.body;
+
+    const success = rulesEngine.updateRule(ruleId, updates);
+    if (!success) {
+      return res.status(404).json({ error: 'Rule not found' });
+    }
+
+    await saveRules(rulesEngine.getRules());
+    const rule = rulesEngine.getRules().find(r => r.id === ruleId);
+    return res.json(rule);
+  } catch (error) {
+    console.error('Error updating rule:', error);
+    return res.status(500).json({ error: 'Failed to update rule' });
+  }
+});
+
+// DELETE /rules/:id - Delete a rule
+app.delete('/rules/:id', async (req: Request, res: Response) => {
+  try {
+    const ruleId = req.params['id'];
+    const success = rulesEngine.removeRule(ruleId);
+
+    if (!success) {
+      return res.status(404).json({ error: 'Rule not found' });
+    }
+
+    await saveRules(rulesEngine.getRules());
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting rule:', error);
+    return res.status(500).json({ error: 'Failed to delete rule' });
+  }
+});
+
+// POST /rules/apply - Apply rules to a transaction
+app.post('/rules/apply', async (req: Request, res: Response) => {
+  try {
+    const transaction = req.body as RulesStoredTransaction;
+    const result = rulesEngine.applyRules(transaction);
+
+    // Save updated rules (usage stats changed)
+    if (result.applied) {
+      await saveRules(rulesEngine.getRules());
+    }
+
+    return res.json(result);
+  } catch (error) {
+    console.error('Error applying rules:', error);
+    return res.status(500).json({ error: 'Failed to apply rules' });
+  }
+});
+
+// POST /rules/from-correction - Create a rule from a user correction
+app.post('/rules/from-correction', async (req: Request, res: Response) => {
+  try {
+    const { transaction, originalCategory, newCategory } = req.body;
+
+    const rule = rulesEngine.createRuleFromCorrection(
+      transaction as RulesStoredTransaction,
+      originalCategory,
+      newCategory
+    );
+
+    rulesEngine.addRule(rule);
+    await saveRules(rulesEngine.getRules());
+
+    return res.status(201).json(rule);
+  } catch (error) {
+    console.error('Error creating rule from correction:', error);
+    return res.status(500).json({ error: 'Failed to create rule from correction' });
+  }
+});
+
+// POST /rules/:id/feedback - Update rule confidence based on feedback
+app.post('/rules/:id/feedback', async (req: Request, res: Response) => {
+  try {
+    const ruleId = req.params['id'];
+    const { wasCorrect } = req.body;
+
+    rulesEngine.updateRuleConfidence(ruleId, wasCorrect);
+    await saveRules(rulesEngine.getRules());
+
+    const rule = rulesEngine.getRules().find(r => r.id === ruleId);
+    return res.json(rule);
+  } catch (error) {
+    console.error('Error updating rule feedback:', error);
+    return res.status(500).json({ error: 'Failed to update rule feedback' });
+  }
+});
+
+// POST /rules/consolidate - Merge similar rules
+app.post('/rules/consolidate', async (req: Request, res: Response) => {
+  try {
+    const consolidated = rulesEngine.consolidateRules();
+    rulesEngine.setRules(consolidated);
+    await saveRules(consolidated);
+
+    return res.json({
+      success: true,
+      ruleCount: consolidated.length,
+      stats: rulesEngine.getStats()
+    });
+  } catch (error) {
+    console.error('Error consolidating rules:', error);
+    return res.status(500).json({ error: 'Failed to consolidate rules' });
+  }
+});
+
+// ==================== AI ASSISTANT ENDPOINTS ====================
+
+// POST /ai/chat - Chat with AI assistant
+app.post('/ai/chat', async (req: Request, res: Response) => {
+  try {
+    const { message, includeContext = true } = req.body;
+
+    if (!message) {
+      return res.status(400).json({ error: 'Message is required' });
+    }
+
+    const assistant = getAIAssistant();
+
+    // Update context if requested
+    if (includeContext) {
+      const transactions = await getStoredTransactions();
+      const categories = await getCategories();
+
+      assistant.setContext({
+        transactions: transactions.map(t => ({
+          id: t.id,
+          description: t.description,
+          amount: t.amount,
+          date: t.date,
+          category: t.category,
+          beneficiary: t.beneficiary,
+          source: t.source,
+          matchInfo: t.matchInfo
+        })),
+        categories
+      });
+    }
+
+    const response = await assistant.query(message);
+    return res.json(response);
+  } catch (error) {
+    console.error('Error in AI chat:', error);
+    return res.status(500).json({ error: 'Failed to process chat message' });
+  }
+});
+
+// POST /ai/chat/clear - Clear conversation history
+app.post('/ai/chat/clear', async (req: Request, res: Response) => {
+  try {
+    const assistant = getAIAssistant();
+    assistant.clearHistory();
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('Error clearing chat history:', error);
+    return res.status(500).json({ error: 'Failed to clear chat history' });
+  }
+});
+
+// ==================== CROSS-ACCOUNT INTELLIGENCE ENDPOINTS ====================
+
+// POST /ai/enrich - Enrich a transaction with cross-account data
+app.post('/ai/enrich', async (req: Request, res: Response) => {
+  try {
+    const transaction = req.body as EnrichedTransaction;
+    const transactions = await getStoredTransactions();
+
+    // Convert to enriched format
+    const allTransactions: EnrichedTransaction[] = transactions.map(t => ({
+      id: t.id,
+      description: t.description,
+      amount: t.amount,
+      date: t.date,
+      category: t.category,
+      beneficiary: t.beneficiary,
+      source: t.source ? {
+        connectorType: t.source.connectorType,
+        externalId: t.source.externalId
+      } : undefined,
+      matchInfo: t.matchInfo ? {
+        matchId: t.matchInfo.matchId,
+        isPrimary: t.matchInfo.isPrimary,
+        patternType: t.matchInfo.patternType,
+        linkedTransactionIds: t.matchInfo.linkedTransactionIds
+      } : undefined
+    }));
+
+    const intelligence = new CrossAccountIntelligence(allTransactions);
+    const enriched = intelligence.enrichTransaction(transaction);
+
+    return res.json(enriched);
+  } catch (error) {
+    console.error('Error enriching transaction:', error);
+    return res.status(500).json({ error: 'Failed to enrich transaction' });
+  }
+});
+
+// POST /ai/suggest-category - Get category suggestions for a transaction
+app.post('/ai/suggest-category', async (req: Request, res: Response) => {
+  try {
+    const transaction = req.body as EnrichedTransaction;
+    const transactions = await getStoredTransactions();
+
+    const allTransactions: EnrichedTransaction[] = transactions.map(t => ({
+      id: t.id,
+      description: t.description,
+      amount: t.amount,
+      date: t.date,
+      category: t.category,
+      beneficiary: t.beneficiary,
+      source: t.source ? {
+        connectorType: t.source.connectorType as any,
+        externalId: t.source.externalId
+      } : undefined
+    }));
+
+    const intelligence = new CrossAccountIntelligence(allTransactions);
+    const suggestions = intelligence.getCategorySuggestions(transaction);
+
+    return res.json({ suggestions });
+  } catch (error) {
+    console.error('Error getting category suggestions:', error);
+    return res.status(500).json({ error: 'Failed to get category suggestions' });
+  }
+});
+
+// POST /ai/detect-insights - Detect insights for a transaction
+app.post('/ai/detect-insights', async (req: Request, res: Response) => {
+  try {
+    const transaction = req.body as EnrichedTransaction;
+    const transactions = await getStoredTransactions();
+
+    const allTransactions: EnrichedTransaction[] = transactions.map(t => ({
+      id: t.id,
+      description: t.description,
+      amount: t.amount,
+      date: t.date,
+      category: t.category,
+      beneficiary: t.beneficiary,
+      source: t.source ? {
+        connectorType: t.source.connectorType as any,
+        externalId: t.source.externalId
+      } : undefined
+    }));
+
+    const intelligence = new CrossAccountIntelligence(allTransactions);
+    const insights = intelligence.detectInsights(transaction);
+
+    return res.json({ insights });
+  } catch (error) {
+    console.error('Error detecting insights:', error);
+    return res.status(500).json({ error: 'Failed to detect insights' });
+  }
+});
+
+// POST /ai/analyze-all - Run cross-account analysis on all uncategorized transactions
+app.post('/ai/analyze-all', async (req: Request, res: Response) => {
+  try {
+    const transactions = await getStoredTransactions();
+
+    const allTransactions: EnrichedTransaction[] = transactions.map(t => ({
+      id: t.id,
+      description: t.description,
+      amount: t.amount,
+      date: t.date,
+      category: t.category,
+      beneficiary: t.beneficiary,
+      source: t.source ? {
+        connectorType: t.source.connectorType,
+        externalId: t.source.externalId
+      } : undefined,
+      matchInfo: t.matchInfo ? {
+        matchId: t.matchInfo.matchId,
+        isPrimary: t.matchInfo.isPrimary,
+        patternType: t.matchInfo.patternType,
+        linkedTransactionIds: t.matchInfo.linkedTransactionIds
+      } : undefined
+    }));
+
+    const intelligence = new CrossAccountIntelligence(allTransactions);
+
+    // Find uncategorized or empty-category transactions
+    const uncategorized = allTransactions.filter(
+      t => !t.category || t.category === '' || t.category === 'Uncategorized'
+    );
+
+    const results: { transactionId: string; suggestions: any[] }[] = [];
+
+    for (const tx of uncategorized) {
+      const suggestions = intelligence.getCategorySuggestions(tx);
+      if (suggestions.length > 0) {
+        results.push({
+          transactionId: tx.id,
+          suggestions
+        });
+      }
+    }
+
+    return res.json({
+      analyzed: uncategorized.length,
+      withSuggestions: results.length,
+      results
+    });
+  } catch (error) {
+    console.error('Error analyzing transactions:', error);
+    return res.status(500).json({ error: 'Failed to analyze transactions' });
   }
 });
 

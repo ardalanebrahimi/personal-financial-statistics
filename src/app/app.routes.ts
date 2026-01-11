@@ -26,6 +26,10 @@ export const routes: Routes = [
     loadComponent: () => import('./features/analytics/analytics.component').then(m => m.AnalyticsComponent)
   },
   {
+    path: 'ai-assistant',
+    loadComponent: () => import('./features/ai-chat/ai-chat.component').then(m => m.AiChatComponent)
+  },
+  {
     path: '',
     redirectTo: 'connectors',
     pathMatch: 'full'

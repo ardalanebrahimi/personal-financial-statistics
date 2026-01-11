@@ -38,6 +38,10 @@ import { MatIconModule } from '@angular/material/icon';
               <mat-icon>analytics</mat-icon>
               Analytics
             </a>
+            <a mat-button routerLink="/ai-assistant" routerLinkActive="active">
+              <mat-icon>smart_toy</mat-icon>
+              AI Assistant
+            </a>
           </nav>
         </div>
       </mat-sidenav>
