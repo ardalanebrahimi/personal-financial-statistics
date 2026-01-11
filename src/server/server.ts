@@ -7,6 +7,7 @@ import { Request, Response } from 'express';
 import { connectorManager } from './connectors/connector-manager';
 import type { ConnectorType as CMConnectorType } from './connectors/connector-manager';
 import { getBrowserService } from './browser';
+import { TransactionMatcher, applyMatchesToTransactions, TransactionMatch, MatchSuggestion, StoredTransaction as MatcherStoredTransaction } from './matching/matcher';
 
 const app = express();
 app.use(express.json());
@@ -15,6 +16,7 @@ app.use(cors());
 const CATEGORIES_FILE = join(__dirname, '../assets/categories.json');
 const TRANSACTIONS_FILE = join(__dirname, '../assets/transactions.json');
 const CONNECTORS_FILE = join(__dirname, '../assets/connectors.json');
+const MATCHES_FILE = join(__dirname, '../assets/matches.json');
 
 // Store pending MFA references
 const pendingMFAReferences: Map<string, string> = new Map();
@@ -110,6 +112,18 @@ interface StoredTransaction {
     externalId?: string;
     importedAt: string;
   };
+  // Matching fields
+  matchId?: string;
+  matchInfo?: {
+    matchId: string;
+    isPrimary: boolean;
+    patternType: string;
+    source: string;
+    confidence: string;
+    linkedTransactionIds: string[];
+  };
+  transactionType?: 'expense' | 'income' | 'transfer' | 'internal';
+  excludeFromStats?: boolean;
 }
 
 async function getStoredTransactions(): Promise<StoredTransaction[]> {
@@ -937,6 +951,301 @@ process.on('SIGINT', async () => {
   const browserService = getBrowserService();
   await browserService.close();
   process.exit(0);
+});
+
+// ==================== MATCHING HELPERS ====================
+
+async function getStoredMatches(): Promise<TransactionMatch[]> {
+  try {
+    const data = await readFile(MATCHES_FILE, 'utf8');
+    const parsed = JSON.parse(data);
+    return parsed.matches || [];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return [];
+    }
+    throw error;
+  }
+}
+
+async function saveMatches(matches: TransactionMatch[]): Promise<void> {
+  await writeFile(MATCHES_FILE, JSON.stringify({ matches }, null, 2));
+}
+
+// ==================== MATCHING ENDPOINTS ====================
+
+// POST /matching/run - Run automatic matching on all transactions
+app.post('/matching/run', async (req: Request, res: Response) => {
+  try {
+    const transactions = await getStoredTransactions();
+    const existingMatches = await getStoredMatches();
+
+    // Convert to matcher format
+    const matcherTransactions = transactions.map(tx => ({
+      ...tx,
+      matchId: tx.matchId,
+      matchInfo: tx.matchInfo ? {
+        ...tx.matchInfo,
+        patternType: tx.matchInfo.patternType as any,
+        source: tx.matchInfo.source as any,
+        confidence: tx.matchInfo.confidence as any
+      } : undefined
+    })) as MatcherStoredTransaction[];
+
+    // Run the matcher
+    const matcher = new TransactionMatcher(matcherTransactions, existingMatches);
+    const result = matcher.runAllMatchers();
+
+    // Save new matches
+    const allMatches = [...existingMatches, ...result.newMatches];
+    await saveMatches(allMatches);
+
+    // Apply matches to transactions and save
+    const updatedTransactions = applyMatchesToTransactions(
+      matcherTransactions,
+      result.newMatches
+    );
+    await writeFile(TRANSACTIONS_FILE, JSON.stringify(updatedTransactions, null, 2));
+
+    return res.json({
+      success: true,
+      newMatches: result.newMatches.length,
+      suggestions: result.suggestions.length,
+      stats: result.stats
+    });
+  } catch (error) {
+    console.error('Error running matcher:', error);
+    return res.status(500).json({ error: 'Failed to run matching' });
+  }
+});
+
+// GET /matching - Get all matches
+app.get('/matching', async (req: Request, res: Response) => {
+  try {
+    const matches = await getStoredMatches();
+    return res.json({ matches });
+  } catch (error) {
+    console.error('Error getting matches:', error);
+    return res.status(500).json({ error: 'Failed to get matches' });
+  }
+});
+
+// GET /matching/suggestions - Get match suggestions (re-runs matcher in suggestion-only mode)
+app.get('/matching/suggestions', async (req: Request, res: Response) => {
+  try {
+    const transactions = await getStoredTransactions();
+    const existingMatches = await getStoredMatches();
+
+    // Convert to matcher format
+    const matcherTransactions = transactions.map(tx => ({
+      ...tx,
+      matchId: tx.matchId,
+      matchInfo: tx.matchInfo ? {
+        ...tx.matchInfo,
+        patternType: tx.matchInfo.patternType as any,
+        source: tx.matchInfo.source as any,
+        confidence: tx.matchInfo.confidence as any
+      } : undefined
+    })) as MatcherStoredTransaction[];
+
+    const matcher = new TransactionMatcher(matcherTransactions, existingMatches);
+    const result = matcher.runAllMatchers();
+
+    return res.json({ suggestions: result.suggestions });
+  } catch (error) {
+    console.error('Error getting suggestions:', error);
+    return res.status(500).json({ error: 'Failed to get suggestions' });
+  }
+});
+
+// POST /matching/confirm - Confirm a suggested match
+app.post('/matching/confirm', async (req: Request, res: Response) => {
+  try {
+    const { primaryTransactionId, linkedTransactionIds, patternType } = req.body;
+
+    if (!primaryTransactionId || !linkedTransactionIds || !patternType) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    const transactions = await getStoredTransactions();
+    const existingMatches = await getStoredMatches();
+
+    // Find the primary transaction to get amount
+    const primaryTx = transactions.find(tx => tx.id === primaryTransactionId);
+    if (!primaryTx) {
+      return res.status(404).json({ error: 'Primary transaction not found' });
+    }
+
+    // Create the match
+    const now = new Date().toISOString();
+    const newMatch: TransactionMatch = {
+      id: `match-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      createdAt: now,
+      updatedAt: now,
+      patternType,
+      source: 'suggested',
+      confidence: 'medium',
+      primaryTransactionId,
+      linkedTransactionIds,
+      matchedAmount: Math.abs(primaryTx.amount)
+    };
+
+    // Save match
+    existingMatches.push(newMatch);
+    await saveMatches(existingMatches);
+
+    // Apply match to transactions
+    const matcherTransactions = transactions.map(tx => ({
+      ...tx,
+      matchId: tx.matchId,
+      matchInfo: tx.matchInfo ? {
+        ...tx.matchInfo,
+        patternType: tx.matchInfo.patternType as any,
+        source: tx.matchInfo.source as any,
+        confidence: tx.matchInfo.confidence as any
+      } : undefined
+    })) as MatcherStoredTransaction[];
+
+    const updatedTransactions = applyMatchesToTransactions(matcherTransactions, [newMatch]);
+    await writeFile(TRANSACTIONS_FILE, JSON.stringify(updatedTransactions, null, 2));
+
+    return res.json({ success: true, match: newMatch });
+  } catch (error) {
+    console.error('Error confirming match:', error);
+    return res.status(500).json({ error: 'Failed to confirm match' });
+  }
+});
+
+// POST /matching/manual - Create a manual match between transactions
+app.post('/matching/manual', async (req: Request, res: Response) => {
+  try {
+    const { primaryTransactionId, linkedTransactionIds, notes } = req.body;
+
+    if (!primaryTransactionId || !linkedTransactionIds || linkedTransactionIds.length === 0) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    const transactions = await getStoredTransactions();
+    const existingMatches = await getStoredMatches();
+
+    // Find the primary transaction
+    const primaryTx = transactions.find(tx => tx.id === primaryTransactionId);
+    if (!primaryTx) {
+      return res.status(404).json({ error: 'Primary transaction not found' });
+    }
+
+    // Verify linked transactions exist
+    for (const linkedId of linkedTransactionIds) {
+      const linkedTx = transactions.find(tx => tx.id === linkedId);
+      if (!linkedTx) {
+        return res.status(404).json({ error: `Linked transaction ${linkedId} not found` });
+      }
+    }
+
+    // Create the manual match
+    const now = new Date().toISOString();
+    const newMatch: TransactionMatch = {
+      id: `match-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      createdAt: now,
+      updatedAt: now,
+      patternType: 'custom',
+      source: 'manual',
+      confidence: 'high',
+      primaryTransactionId,
+      linkedTransactionIds,
+      matchedAmount: Math.abs(primaryTx.amount),
+      notes
+    };
+
+    // Save match
+    existingMatches.push(newMatch);
+    await saveMatches(existingMatches);
+
+    // Apply match to transactions
+    const matcherTransactions = transactions.map(tx => ({
+      ...tx,
+      matchId: tx.matchId,
+      matchInfo: tx.matchInfo ? {
+        ...tx.matchInfo,
+        patternType: tx.matchInfo.patternType as any,
+        source: tx.matchInfo.source as any,
+        confidence: tx.matchInfo.confidence as any
+      } : undefined
+    })) as MatcherStoredTransaction[];
+
+    const updatedTransactions = applyMatchesToTransactions(matcherTransactions, [newMatch]);
+    await writeFile(TRANSACTIONS_FILE, JSON.stringify(updatedTransactions, null, 2));
+
+    return res.json({ success: true, match: newMatch });
+  } catch (error) {
+    console.error('Error creating manual match:', error);
+    return res.status(500).json({ error: 'Failed to create manual match' });
+  }
+});
+
+// DELETE /matching/:id - Remove a match
+app.delete('/matching/:id', async (req: Request, res: Response) => {
+  try {
+    const matchId = req.params['id'];
+    const matches = await getStoredMatches();
+    const matchIndex = matches.findIndex(m => m.id === matchId);
+
+    if (matchIndex === -1) {
+      return res.status(404).json({ error: 'Match not found' });
+    }
+
+    const match = matches[matchIndex];
+
+    // Remove match from list
+    matches.splice(matchIndex, 1);
+    await saveMatches(matches);
+
+    // Remove match info from transactions
+    const transactions = await getStoredTransactions();
+    const updatedTransactions = transactions.map(tx => {
+      if (tx.matchId === matchId) {
+        const { matchId: _, matchInfo: __, transactionType, excludeFromStats, ...rest } = tx;
+        // Only keep transactionType and excludeFromStats if they weren't set by matching
+        return rest;
+      }
+      return tx;
+    });
+    await writeFile(TRANSACTIONS_FILE, JSON.stringify(updatedTransactions, null, 2));
+
+    return res.json({ success: true, message: 'Match removed' });
+  } catch (error) {
+    console.error('Error removing match:', error);
+    return res.status(500).json({ error: 'Failed to remove match' });
+  }
+});
+
+// GET /matching/:id - Get a specific match with transaction details
+app.get('/matching/:id', async (req: Request, res: Response) => {
+  try {
+    const matchId = req.params['id'];
+    const matches = await getStoredMatches();
+    const match = matches.find(m => m.id === matchId);
+
+    if (!match) {
+      return res.status(404).json({ error: 'Match not found' });
+    }
+
+    // Get transaction details
+    const transactions = await getStoredTransactions();
+    const primaryTx = transactions.find(tx => tx.id === match.primaryTransactionId);
+    const linkedTxs = match.linkedTransactionIds
+      .map(id => transactions.find(tx => tx.id === id))
+      .filter(Boolean);
+
+    return res.json({
+      match,
+      primaryTransaction: primaryTx,
+      linkedTransactions: linkedTxs
+    });
+  } catch (error) {
+    console.error('Error getting match:', error);
+    return res.status(500).json({ error: 'Failed to get match' });
+  }
 });
 
 app.listen(3000, () => {

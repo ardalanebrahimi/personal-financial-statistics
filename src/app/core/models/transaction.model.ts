@@ -1,4 +1,5 @@
 import { ConnectorType } from './connector.model';
+import { TransactionType, MatchSource, MatchConfidence, MatchPatternType } from './match.model';
 
 /**
  * Transaction source tracking
@@ -11,6 +12,18 @@ export interface TransactionSource {
   rawData?: Record<string, unknown>; // Original data for debugging
 }
 
+/**
+ * Match information attached to a transaction
+ */
+export interface TransactionMatchInfo {
+  matchId: string;              // ID of the TransactionMatch record
+  isPrimary: boolean;           // Is this the primary (bank) transaction?
+  patternType: MatchPatternType;
+  source: MatchSource;
+  confidence: MatchConfidence;
+  linkedTransactionIds: string[]; // IDs of related transactions
+}
+
 export interface Transaction {
   id: string;
   date: Date;
@@ -18,11 +31,23 @@ export interface Transaction {
   amount: number;
   category?: string;
   beneficiary?: string;
+
   // Source tracking fields
   source?: TransactionSource;
+
+  // Transaction type for financial tracking
+  transactionType?: TransactionType;
+
+  // Matching fields
+  matchInfo?: TransactionMatchInfo;
+
   // Merge/split tracking
   mergedFrom?: string[];  // IDs of transactions merged into this one
   splitFrom?: string;     // ID of parent transaction if this was split
+
+  // Flags
+  excludeFromStats?: boolean;  // Exclude from spending calculations (e.g., internal transfers)
+  isReconciled?: boolean;      // User has verified this transaction
 }
 
 export interface Category {
