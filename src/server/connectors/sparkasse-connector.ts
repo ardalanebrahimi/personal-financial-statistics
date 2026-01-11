@@ -3,16 +3,25 @@
  * Uses lib-fints for communication with German Sparkasse banks
  */
 
-import {
-  FinTSClient,
-  FinTSConfig,
-  BankingInformation
-} from 'lib-fints';
+// Dynamic import types - lib-fints is ESM-only
+type FinTSClientType = import('lib-fints').FinTSClient;
+type FinTSConfigType = import('lib-fints').FinTSConfig;
+type BankingInformationType = import('lib-fints').BankingInformation;
 
 // TanMediaRequirement values (matches lib-fints codes)
 const TAN_MEDIA_NOT_ALLOWED = 0;
 const TAN_MEDIA_OPTIONAL = 1;
 const TAN_MEDIA_REQUIRED = 2;
+
+// Module cache for dynamic import
+let libFintsModule: typeof import('lib-fints') | null = null;
+
+async function getLibFints(): Promise<typeof import('lib-fints')> {
+  if (!libFintsModule) {
+    libFintsModule = await import('lib-fints');
+  }
+  return libFintsModule;
+}
 
 import {
   BaseConnector,
@@ -25,24 +34,34 @@ import {
   AccountInfo
 } from './base-connector';
 
-// Sparkasse bank endpoints by BLZ (common ones)
-// In production, this should be fetched from a database or API
+// Sparkasse bank endpoints by BLZ (verified endpoints)
+// Source: https://www.willuhn.de/wiki/doku.php?id=support:list:banken:spk
 const SPARKASSE_ENDPOINTS: Record<string, string> = {
-  // Example entries - users would need their specific Sparkasse BLZ
-  '70050000': 'https://banking-by1.s-fints-pt-by.de/fints30', // Sparkasse München
-  '76050101': 'https://banking-by1.s-fints-pt-by.de/fints30', // Sparkasse Nürnberg
-  '50050201': 'https://fints.sparkasse-ffm.de/fints30',        // Frankfurter Sparkasse
-  '37050198': 'https://fints.sparkasse-koelnbonn.de/fints30', // Sparkasse KölnBonn
-  '10050000': 'https://banking-be1.s-fints-pt-be.de/fints30', // Berliner Sparkasse
-  '20050550': 'https://banking-hh1.s-fints-pt-hh.de/fints30', // Haspa Hamburg
-  '30050110': 'https://banking-nw2.s-fints-pt-nw.de/fints30', // Stadtsparkasse Düsseldorf
-  '60050101': 'https://banking-bw2.s-fints-pt-bw.de/fints30', // BW Bank / Sparkasse Stuttgart
+  // Berlin
+  '10050000': 'https://banking-be3.s-fints-pt-be.de/fints30', // Berliner Sparkasse
+  // Hamburg
+  '20050550': 'https://banking-hh7.s-fints-pt-hh.de/fints30', // Haspa Hamburg
+  // Niedersachsen
+  '25050180': 'https://banking.s-fints-pt-ni.de/PinTanServlet', // Sparkasse Hannover
+  // NRW
+  '37050299': 'https://hbci-pintan-rl.s-hbci.de/PinTanServlet', // Sparkasse Köln
+  '30050110': 'https://hbci-pintan-rl.s-hbci.de/PinTanServlet', // Stadtsparkasse Düsseldorf
+  // Hessen
+  '50850150': 'https://banking-hs3.s-fints-pt-hs.de/fints30', // Sparkasse Darmstadt
+  '50050201': 'https://banking-hs3.s-fints-pt-hs.de/fints30', // Frankfurter Sparkasse
+  // Baden-Württemberg
+  '66050101': 'https://hbci-pintan-bw.s-hbci.de/PinTanServlet', // Sparkasse Karlsruhe
+  '60050101': 'https://hbci-pintan-bw.s-hbci.de/PinTanServlet', // BW Bank / Sparkasse Stuttgart
+  // Bayern
+  '76050101': 'https://hbci-pintan-by.s-hbci.de/PinTanServlet', // Sparkasse Nürnberg
+  '70050000': 'https://hbci-pintan-by.s-hbci.de/PinTanServlet', // Sparkasse München
+  '71151020': 'https://hbci-pintan-by.s-hbci.de/PinTanServlet', // Sparkasse Altötting-Mühldorf
 };
 
 // FinTS Product registration ID
 // NOTE: For production use, register at https://www.hbci-zka.de/register/prod_register.htm
 // This is a placeholder - real registration is free but required for production
-const FINTS_PRODUCT_ID = process.env.FINTS_PRODUCT_ID || '9FA6681DEC0CF3046BFC2F8A6';
+const FINTS_PRODUCT_ID = process.env['FINTS_PRODUCT_ID'] || '9FA6681DEC0CF3046BFC2F8A6';
 const FINTS_PRODUCT_VERSION = '1.0.0';
 
 interface PendingOperation {
@@ -53,9 +72,9 @@ interface PendingOperation {
 }
 
 export class SparkasseConnector extends BaseConnector {
-  private client?: FinTSClient;
-  private config?: FinTSConfig;
-  private bankingInfo?: BankingInformation;
+  private client?: FinTSClientType;
+  private config?: FinTSConfigType;
+  private bankingInfo?: BankingInformationType;
   private connected: boolean = false;
   private accounts: AccountInfo[] = [];
   private pendingOperation?: PendingOperation;
@@ -78,18 +97,21 @@ export class SparkasseConnector extends BaseConnector {
     // Most Sparkassen use regional servers
     const region = blz.substring(0, 2);
 
-    // This is a simplified mapping - in production, use a proper BLZ database
+    // Regional fallback endpoints - may not work for all banks
+    // For best results, add specific BLZ to SPARKASSE_ENDPOINTS above
     const regionalEndpoints: Record<string, string> = {
-      '10': 'https://banking-be1.s-fints-pt-be.de/fints30', // Berlin
-      '20': 'https://banking-hh1.s-fints-pt-hh.de/fints30', // Hamburg
-      '30': 'https://banking-nw2.s-fints-pt-nw.de/fints30', // NRW
-      '37': 'https://banking-nw2.s-fints-pt-nw.de/fints30', // Köln area
-      '50': 'https://fints.sparkasse-ffm.de/fints30',        // Hessen
-      '60': 'https://banking-bw2.s-fints-pt-bw.de/fints30', // Baden-Württemberg
-      '70': 'https://banking-by1.s-fints-pt-by.de/fints30', // Bayern
-      '76': 'https://banking-by1.s-fints-pt-by.de/fints30', // Bayern (Franken)
-      '80': 'https://banking-by1.s-fints-pt-by.de/fints30', // Bayern
-      '86': 'https://banking-st1.s-fints-pt-st.de/fints30', // Sachsen
+      '10': 'https://banking-be3.s-fints-pt-be.de/fints30', // Berlin/Brandenburg
+      '20': 'https://banking-hh7.s-fints-pt-hh.de/fints30', // Hamburg
+      '25': 'https://banking.s-fints-pt-ni.de/PinTanServlet', // Niedersachsen
+      '30': 'https://hbci-pintan-rl.s-hbci.de/PinTanServlet', // NRW
+      '37': 'https://hbci-pintan-rl.s-hbci.de/PinTanServlet', // Köln area
+      '50': 'https://banking-hs3.s-fints-pt-hs.de/fints30', // Hessen
+      '60': 'https://hbci-pintan-bw.s-hbci.de/PinTanServlet', // Baden-Württemberg
+      '66': 'https://hbci-pintan-bw.s-hbci.de/PinTanServlet', // Baden-Württemberg
+      '70': 'https://hbci-pintan-by.s-hbci.de/PinTanServlet', // Bayern
+      '76': 'https://hbci-pintan-by.s-hbci.de/PinTanServlet', // Bayern (Franken)
+      '80': 'https://hbci-pintan-by.s-hbci.de/PinTanServlet', // Bayern
+      '86': 'https://banking-sn3.s-fints-pt-sn.de/fints30', // Sachsen
     };
 
     return regionalEndpoints[region] || null;
@@ -112,7 +134,9 @@ export class SparkasseConnector extends BaseConnector {
     console.log(`[Sparkasse] Initializing connector for BLZ ${credentials.bankCode}`);
     console.log(`[Sparkasse] Using endpoint: ${endpoint}`);
 
-    // Create initial FinTS configuration
+    // Create initial FinTS configuration using dynamic import
+    const { FinTSConfig, FinTSClient } = await getLibFints();
+
     this.config = FinTSConfig.forFirstTimeUse(
       FINTS_PRODUCT_ID,
       FINTS_PRODUCT_VERSION,
@@ -125,7 +149,7 @@ export class SparkasseConnector extends BaseConnector {
     this.client = new FinTSClient(this.config);
 
     // Enable debug logging in development
-    if (process.env.NODE_ENV === 'development') {
+    if (process.env['NODE_ENV'] === 'development') {
       this.config.debugEnabled = true;
     }
   }
@@ -183,10 +207,11 @@ export class SparkasseConnector extends BaseConnector {
       const bankingInfo = syncResponse.bankingInformation;
       this.bankingInfo = bankingInfo;
 
-      if (bankingInfo?.bpd?.availableTanMethodIds?.length > 0) {
+      const availableTanMethods = bankingInfo?.bpd?.availableTanMethodIds;
+      if (availableTanMethods && availableTanMethods.length > 0) {
         // Select first available TAN method
         // In production, let user choose or prefer decoupled methods
-        const tanMethodId = bankingInfo.bpd.availableTanMethodIds[0];
+        const tanMethodId = availableTanMethods[0];
         this.selectedTanMethodId = tanMethodId;
         this.client.selectTanMethod(tanMethodId);
 
@@ -507,7 +532,7 @@ export class SparkasseConnector extends BaseConnector {
   /**
    * Get stored banking information for session persistence
    */
-  getBankingInfo(): BankingInformation | undefined {
+  getBankingInfo(): BankingInformationType | undefined {
     return this.bankingInfo;
   }
 
@@ -517,29 +542,55 @@ export class SparkasseConnector extends BaseConnector {
   private createMFAChallenge(message: string, reference?: string): MFAChallenge {
     const tanMethod = this.config?.selectedTanMethod;
 
+    // Check if it's a decoupled TAN (user confirms in external app)
+    // Detection methods:
+    // 1. lib-fints decoupled property
+    // 2. Message contains phrases indicating app confirmation
+    // 3. TAN method name suggests push/app-based confirmation
+    const messageLC = message.toLowerCase();
+    const tanNameLC = tanMethod?.name?.toLowerCase() || '';
+
+    const isDecoupledByProperty = tanMethod?.decoupled === true;
+    const isDecoupledByMessage =
+      messageLC.includes('app freigeben') ||
+      messageLC.includes('in ihrer app') ||
+      messageLC.includes('pushtan') ||
+      messageLC.includes('s-pushtan') ||
+      messageLC.includes('bestätigen sie') ||
+      messageLC.includes('freigabe in der app');
+    const isDecoupledByName =
+      tanNameLC.includes('push') ||
+      tanNameLC.includes('decoupled') ||
+      tanNameLC.includes('s-pushtan');
+
+    const isDecoupled = isDecoupledByProperty || isDecoupledByMessage || isDecoupledByName;
+
     // Determine MFA type based on TAN method
     let type: MFAChallenge['type'] = 'push';
 
-    if (tanMethod) {
-      if (tanMethod.decoupled) {
-        type = 'decoupled';
-      } else if (tanMethod.name?.toLowerCase().includes('photo')) {
+    if (isDecoupled) {
+      type = 'decoupled';
+    } else if (tanMethod) {
+      if (tanNameLC.includes('photo')) {
         type = 'photo_tan';
-      } else if (tanMethod.name?.toLowerCase().includes('chip')) {
+      } else if (tanNameLC.includes('chip')) {
         type = 'chip_tan';
-      } else if (tanMethod.name?.toLowerCase().includes('sms')) {
+      } else if (tanNameLC.includes('sms')) {
         type = 'sms';
-      } else if (tanMethod.name?.toLowerCase().includes('push') ||
-                 tanMethod.name?.toLowerCase().includes('app')) {
+      } else if (tanNameLC.includes('push') || tanNameLC.includes('app')) {
         type = 'app_tan';
       }
     }
+
+    console.log(`[Sparkasse] Creating MFA challenge - type: ${type}, decoupled: ${isDecoupled}`);
+    console.log(`[Sparkasse] Detection: byProperty=${isDecoupledByProperty}, byMessage=${isDecoupledByMessage}, byName=${isDecoupledByName}`);
 
     return {
       type,
       message,
       reference,
-      expiresAt: new Date(Date.now() + 5 * 60 * 1000) // 5 minutes
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000), // 5 minutes
+      decoupled: isDecoupled
     };
   }
 

@@ -28,6 +28,7 @@ export interface MFAChallenge {
   imageData?: string; // Base64 encoded for photoTAN
   reference?: string; // TAN reference for continuing the flow
   expiresAt?: Date;
+  decoupled?: boolean; // True if user confirms in external app (no code entry needed)
 }
 
 export interface ConnectResult {

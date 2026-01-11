@@ -1,4 +1,4 @@
-import { Component, Inject } from '@angular/core';
+import { Component, Inject, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatDialogRef, MAT_DIALOG_DATA, MatDialogModule } from '@angular/material/dialog';
@@ -7,11 +7,18 @@ import { MatInputModule } from '@angular/material/input';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 
 import { ConnectorState, MFAType } from '../../core/models/connector.model';
+import { ConnectorService } from '../../services/connector.service';
 
 export interface MfaDialogData {
   connector: ConnectorState;
+}
+
+export interface MfaDialogResult {
+  code?: string;
+  action: 'submit' | 'cancel' | 'confirmed';
 }
 
 @Component({
@@ -25,7 +32,8 @@ export interface MfaDialogData {
     MatInputModule,
     MatButtonModule,
     MatIconModule,
-    MatProgressBarModule
+    MatProgressBarModule,
+    MatProgressSpinnerModule
   ],
   template: `
     <h2 mat-dialog-title>
@@ -43,15 +51,17 @@ export interface MfaDialogData {
         <img [src]="data.connector.mfaChallenge?.imageData" alt="PhotoTAN">
       </div>
 
-      <!-- Push Notification Notice -->
-      <div class="push-notice" *ngIf="isPushTan">
+      <!-- Decoupled TAN Notice (pushTAN - waiting for app confirmation) -->
+      <div class="decoupled-notice" *ngIf="isDecoupled">
         <mat-icon>phone_android</mat-icon>
-        <p>Please confirm the login request in your banking app</p>
-        <mat-progress-bar mode="indeterminate"></mat-progress-bar>
+        <p>Please confirm the request in your banking app</p>
+        <mat-spinner diameter="40"></mat-spinner>
+        <p class="waiting-text">Waiting for confirmation...</p>
+        <p class="poll-status" *ngIf="pollCount > 0">Checking... ({{ pollCount }})</p>
       </div>
 
-      <!-- Code Input -->
-      <mat-form-field appearance="outline" class="full-width" *ngIf="!isPushTan">
+      <!-- Code Input (only for non-decoupled TANs) -->
+      <mat-form-field appearance="outline" class="full-width" *ngIf="!isDecoupled">
         <mat-label>{{ getCodeLabel() }}</mat-label>
         <input matInput
                [(ngModel)]="code"
@@ -69,9 +79,10 @@ export interface MfaDialogData {
     <mat-dialog-actions align="end">
       <button mat-button (click)="onCancel()">Cancel</button>
       <button mat-raised-button color="primary"
-              [disabled]="!code && !isPushTan"
+              *ngIf="!isDecoupled"
+              [disabled]="!code"
               (click)="onSubmit()">
-        {{ isPushTan ? 'Confirmed in App' : 'Verify' }}
+        Verify
       </button>
     </mat-dialog-actions>
   `,
@@ -110,28 +121,38 @@ export interface MfaDialogData {
       border-radius: 4px;
     }
 
-    .push-notice {
+    .decoupled-notice {
       text-align: center;
       padding: 1.5rem;
-      background: #f5f5f5;
+      background: #e3f2fd;
       border-radius: 8px;
       margin: 1rem 0;
     }
 
-    .push-notice mat-icon {
+    .decoupled-notice mat-icon {
       font-size: 48px;
       width: 48px;
       height: 48px;
       color: #1976d2;
     }
 
-    .push-notice p {
-      margin: 1rem 0;
+    .decoupled-notice p {
+      margin: 1rem 0 0.5rem;
       color: #666;
     }
 
-    .push-notice mat-progress-bar {
-      margin-top: 1rem;
+    .decoupled-notice .waiting-text {
+      font-weight: 500;
+      color: #1976d2;
+    }
+
+    .decoupled-notice .poll-status {
+      font-size: 0.75rem;
+      color: #999;
+    }
+
+    .decoupled-notice mat-spinner {
+      margin: 1rem auto;
     }
 
     .full-width {
@@ -146,21 +167,37 @@ export interface MfaDialogData {
     }
   `]
 })
-export class MfaDialogComponent {
+export class MfaDialogComponent implements OnInit, OnDestroy {
   code = '';
+  pollCount = 0;
+  private pollInterval: ReturnType<typeof setInterval> | null = null;
+  private maxPollAttempts = 60; // Poll for up to 2 minutes (60 * 2 seconds)
 
   constructor(
     public dialogRef: MatDialogRef<MfaDialogComponent>,
-    @Inject(MAT_DIALOG_DATA) public data: MfaDialogData
+    @Inject(MAT_DIALOG_DATA) public data: MfaDialogData,
+    private connectorService: ConnectorService
   ) {}
+
+  ngOnInit(): void {
+    // Start polling for decoupled TAN
+    if (this.isDecoupled) {
+      this.startPolling();
+    }
+  }
+
+  ngOnDestroy(): void {
+    this.stopPolling();
+  }
 
   get isPhotoTan(): boolean {
     return this.data.connector.mfaChallenge?.type === MFAType.PHOTO_TAN;
   }
 
-  get isPushTan(): boolean {
-    return this.data.connector.mfaChallenge?.type === MFAType.PUSH ||
-           this.data.connector.mfaChallenge?.type === MFAType.APP_TAN;
+  get isDecoupled(): boolean {
+    // Check if it's a decoupled TAN (user confirms in external app)
+    return this.data.connector.mfaChallenge?.decoupled === true ||
+           this.data.connector.mfaChallenge?.type === MFAType.DECOUPLED;
   }
 
   getCodeLabel(): string {
@@ -197,16 +234,67 @@ export class MfaDialogComponent {
     }
   }
 
+  private startPolling(): void {
+    console.log('[MFA Dialog] Starting decoupled TAN polling...');
+
+    // Poll every 2 seconds
+    this.pollInterval = setInterval(async () => {
+      this.pollCount++;
+
+      if (this.pollCount >= this.maxPollAttempts) {
+        console.log('[MFA Dialog] Polling timeout reached');
+        this.stopPolling();
+        return;
+      }
+
+      try {
+        // Check if the TAN was confirmed by polling the connector status
+        await this.checkDecoupledStatus();
+      } catch (error) {
+        console.error('[MFA Dialog] Polling error:', error);
+      }
+    }, 2000);
+  }
+
+  private stopPolling(): void {
+    if (this.pollInterval) {
+      clearInterval(this.pollInterval);
+      this.pollInterval = null;
+    }
+  }
+
+  private async checkDecoupledStatus(): Promise<void> {
+    const connectorId = this.data.connector.config.id;
+    const reference = this.data.connector.mfaChallenge?.reference;
+
+    try {
+      // Poll the backend to check if decoupled TAN was confirmed
+      const result = await this.connectorService.pollDecoupledStatus(connectorId, reference);
+
+      if (result.confirmed) {
+        console.log('[MFA Dialog] Decoupled TAN confirmed!');
+        this.stopPolling();
+        this.dialogRef.close({ action: 'confirmed' } as MfaDialogResult);
+      } else if (result.expired) {
+        console.log('[MFA Dialog] Decoupled TAN expired');
+        this.stopPolling();
+        // Keep dialog open so user can cancel
+      }
+    } catch (error) {
+      // Ignore polling errors, keep trying
+      console.error('[MFA Dialog] Poll check failed:', error);
+    }
+  }
+
   onCancel(): void {
-    this.dialogRef.close();
+    this.stopPolling();
+    this.dialogRef.close({ action: 'cancel' } as MfaDialogResult);
   }
 
   onSubmit(): void {
-    if (this.isPushTan) {
-      // For push notifications, we assume user confirmed in app
-      this.dialogRef.close('push_confirmed');
-    } else if (this.code) {
-      this.dialogRef.close(this.code);
+    this.stopPolling();
+    if (this.code) {
+      this.dialogRef.close({ code: this.code, action: 'submit' } as MfaDialogResult);
     }
   }
 }

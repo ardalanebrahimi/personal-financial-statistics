@@ -24,7 +24,7 @@ import {
   DateRange
 } from '../../core/models/connector.model';
 import { AddConnectorDialogComponent } from './add-connector-dialog.component';
-import { MfaDialogComponent } from './mfa-dialog.component';
+import { MfaDialogComponent, MfaDialogResult } from './mfa-dialog.component';
 import { CredentialsDialogComponent, CredentialsResult } from './credentials-dialog.component';
 
 @Component({
@@ -543,10 +543,21 @@ export class ConnectorsComponent implements OnInit, OnDestroy {
       data: { connector: currentConnector }
     });
 
-    dialogRef.afterClosed().subscribe(async code => {
-      if (code) {
+    dialogRef.afterClosed().subscribe(async (result: MfaDialogResult | undefined) => {
+      if (!result || result.action === 'cancel') {
+        return;
+      }
+
+      // For decoupled TAN that was confirmed via polling
+      if (result.action === 'confirmed') {
+        this.snackBar.open('Connected successfully', 'Close', { duration: 3000 });
+        return;
+      }
+
+      // For traditional TAN with code entry
+      if (result.action === 'submit' && result.code) {
         try {
-          await this.connectorService.submitMFA(connector.config.id, code);
+          await this.connectorService.submitMFA(connector.config.id, result.code);
           this.snackBar.open('Connected successfully', 'Close', { duration: 3000 });
         } catch (error) {
           this.snackBar.open('MFA verification failed', 'Close', { duration: 3000 });

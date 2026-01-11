@@ -20,7 +20,8 @@ export enum MFAType {
   PHOTO_TAN = 'photo_tan',
   CHIP_TAN = 'chip_tan',
   APP_TAN = 'app_tan',
-  TOTP = 'totp'
+  TOTP = 'totp',
+  DECOUPLED = 'decoupled' // pushTAN where user confirms in banking app
 }
 
 /**
@@ -42,6 +43,8 @@ export interface MFAChallenge {
   imageData?: string; // Base64 encoded image for photoTAN
   expiresAt?: Date;
   attemptsRemaining?: number;
+  decoupled?: boolean; // If true, user confirms in external app (no code needed)
+  reference?: string; // Reference for polling decoupled TAN status
 }
 
 /**

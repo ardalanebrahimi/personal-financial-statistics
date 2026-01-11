@@ -223,4 +223,31 @@ export class ConnectorService {
         c.status === ConnectorStatus.FETCHING
     );
   }
+
+  /**
+   * Poll for decoupled TAN status (pushTAN confirmation)
+   */
+  async pollDecoupledStatus(
+    connectorId: string,
+    reference?: string
+  ): Promise<{ confirmed: boolean; expired: boolean; error?: string }> {
+    try {
+      const response = await firstValueFrom(
+        this.http.post<{ confirmed: boolean; expired: boolean; error?: string }>(
+          `${this.API_URL}/${connectorId}/poll-decoupled`,
+          { reference }
+        )
+      );
+
+      // If confirmed, reload connectors to get updated state
+      if (response.confirmed) {
+        await this.loadConnectors();
+      }
+
+      return response;
+    } catch (error) {
+      console.error('Failed to poll decoupled status:', error);
+      return { confirmed: false, expired: false, error: 'Polling failed' };
+    }
+  }
 }

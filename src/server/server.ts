@@ -451,7 +451,9 @@ app.post('/connectors/:id/connect', async (req: Request, res: Response) => {
             type: result.mfaChallenge.type,
             message: result.mfaChallenge.message,
             imageData: result.mfaChallenge.imageData,
-            expiresAt: result.mfaChallenge.expiresAt?.toISOString()
+            expiresAt: result.mfaChallenge.expiresAt?.toISOString(),
+            decoupled: result.mfaChallenge.decoupled || false,
+            reference: result.mfaChallenge.reference
           }
         };
         connectorStates.set(connectorConfig.id, state);
@@ -544,7 +546,9 @@ app.post('/connectors/:id/mfa', async (req: Request, res: Response) => {
           type: result.mfaChallenge.type,
           message: result.mfaChallenge.message,
           imageData: result.mfaChallenge.imageData,
-          expiresAt: result.mfaChallenge.expiresAt?.toISOString()
+          expiresAt: result.mfaChallenge.expiresAt?.toISOString(),
+          decoupled: result.mfaChallenge.decoupled || false,
+          reference: result.mfaChallenge.reference
         }
       };
       connectorStates.set(connectorConfig.id, state);
@@ -563,6 +567,70 @@ app.post('/connectors/:id/mfa', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error submitting MFA:', error);
     return res.status(500).json({ error: 'Failed to verify MFA' });
+  }
+});
+
+// POST /connectors/:id/poll-decoupled - Poll for decoupled TAN confirmation
+app.post('/connectors/:id/poll-decoupled', async (req: Request, res: Response) => {
+  try {
+    const connectors = await getStoredConnectors();
+    const connectorConfig = connectors.find(c => c.id === req.params['id']);
+
+    if (!connectorConfig) {
+      return res.status(404).json({ error: 'Connector not found' });
+    }
+
+    const currentState = connectorStates.get(connectorConfig.id);
+    if (!currentState || currentState.status !== ConnectorStatus.MFA_REQUIRED) {
+      // If no longer in MFA_REQUIRED state, check if connected (meaning TAN was confirmed)
+      if (currentState?.status === ConnectorStatus.CONNECTED) {
+        return res.json({ confirmed: true, expired: false });
+      }
+      return res.json({ confirmed: false, expired: true, error: 'No pending decoupled TAN' });
+    }
+
+    // Check if we have a real connector instance
+    const connectorInstance = connectorManager.getConnector(connectorConfig.id);
+
+    if (!connectorInstance) {
+      // Simulation mode - just say not confirmed
+      return res.json({ confirmed: false, expired: false });
+    }
+
+    // For decoupled TAN, we need to poll the bank to see if it was confirmed
+    // This is done by calling submitMFA with an empty code
+    const reference = pendingMFAReferences.get(connectorConfig.id);
+
+    try {
+      const result = await connectorInstance.connector.submitMFA('', reference);
+
+      if (result.connected) {
+        // TAN was confirmed!
+        pendingMFAReferences.delete(connectorConfig.id);
+        const state: ConnectorState = {
+          config: connectorConfig,
+          status: ConnectorStatus.CONNECTED,
+          statusMessage: `Connected. Found ${result.accounts?.length || 0} accounts.`
+        };
+        connectorStates.set(connectorConfig.id, state);
+        return res.json({ confirmed: true, expired: false });
+      }
+
+      if (result.requiresMFA) {
+        // Still waiting for confirmation
+        return res.json({ confirmed: false, expired: false });
+      }
+
+      // Something went wrong
+      return res.json({ confirmed: false, expired: false, error: result.error });
+    } catch (pollError) {
+      // Polling error - might be timeout or network issue
+      console.error('Decoupled polling error:', pollError);
+      return res.json({ confirmed: false, expired: false });
+    }
+  } catch (error) {
+    console.error('Error polling decoupled:', error);
+    return res.status(500).json({ error: 'Failed to poll decoupled status' });
   }
 });
 
