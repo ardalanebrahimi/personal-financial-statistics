@@ -2,6 +2,10 @@ import { Routes } from '@angular/router';
 
 export const routes: Routes = [
   {
+    path: 'dashboard',
+    loadComponent: () => import('./features/dashboard/dashboard.component').then(m => m.DashboardComponent)
+  },
+  {
     path: 'connectors',
     loadComponent: () => import('./features/connectors/connectors.component').then(m => m.ConnectorsComponent)
   },
@@ -30,8 +34,12 @@ export const routes: Routes = [
     loadComponent: () => import('./features/ai-chat/ai-chat.component').then(m => m.AiChatComponent)
   },
   {
+    path: 'help',
+    loadComponent: () => import('./features/help/help.component').then(m => m.HelpComponent)
+  },
+  {
     path: '',
-    redirectTo: 'connectors',
+    redirectTo: 'dashboard',
     pathMatch: 'full'
   }
 ];

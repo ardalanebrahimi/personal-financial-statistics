@@ -193,11 +193,43 @@ app.get('/transactions/category/:description', async (req: Request, res: Respons
 
 app.get('/transactions', async (req: Request, res: Response) => {
   try {
-    const transactions = await getStoredTransactions();
-    const sortedTransactions = transactions.sort((a, b) => 
-      new Date(b.date).getTime() - new Date(a.date).getTime()
-    );
-    res.json({ transactions: sortedTransactions });
+    const { page, limit, sort = 'date', order = 'desc' } = req.query;
+
+    let transactions = await getStoredTransactions();
+
+    // Sort transactions
+    const sortField = sort.toString();
+    const sortOrder = order.toString() === 'asc' ? 1 : -1;
+    transactions.sort((a: any, b: any) => {
+      if (sortField === 'date') {
+        return (new Date(b.date).getTime() - new Date(a.date).getTime()) * sortOrder;
+      } else if (sortField === 'amount') {
+        return (b.amount - a.amount) * sortOrder;
+      }
+      return 0;
+    });
+
+    // Pagination
+    const total = transactions.length;
+    if (page && limit) {
+      const pageNum = parseInt(page.toString(), 10);
+      const limitNum = parseInt(limit.toString(), 10);
+      const start = (pageNum - 1) * limitNum;
+      transactions = transactions.slice(start, start + limitNum);
+
+      return res.json({
+        transactions,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total,
+          totalPages: Math.ceil(total / limitNum),
+          hasMore: start + transactions.length < total
+        }
+      });
+    }
+
+    res.json({ transactions, total });
   } catch (error) {
     res.status(500).json({ error: 'Failed to get transactions' });
   }
@@ -1736,6 +1768,204 @@ app.post('/ai/analyze-all', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error analyzing transactions:', error);
     return res.status(500).json({ error: 'Failed to analyze transactions' });
+  }
+});
+
+// ==================== DATA EXPORT/IMPORT ENDPOINTS ====================
+
+// GET /export - Export all data for backup
+app.get('/export', async (req: Request, res: Response) => {
+  try {
+    const [transactions, categories, rules, matches] = await Promise.all([
+      getStoredTransactions(),
+      readFile(CATEGORIES_FILE, 'utf8').then(d => JSON.parse(d).categories).catch(() => []),
+      getStoredRules(),
+      getStoredMatches()
+    ]);
+
+    const exportData = {
+      version: '1.0',
+      exportDate: new Date().toISOString(),
+      transactions,
+      categories,
+      rules,
+      matches
+    };
+
+    return res.json(exportData);
+  } catch (error) {
+    console.error('Error exporting data:', error);
+    return res.status(500).json({ error: 'Failed to export data' });
+  }
+});
+
+// POST /import - Import data from backup
+app.post('/import', async (req: Request, res: Response) => {
+  try {
+    const { transactions, categories, rules, matches, merge = false } = req.body;
+
+    if (merge) {
+      // Merge with existing data
+      const existingTransactions = await getStoredTransactions();
+      const existingCategories = await readFile(CATEGORIES_FILE, 'utf8')
+        .then(d => JSON.parse(d).categories)
+        .catch(() => []);
+      const existingRules = await getStoredRules();
+      const existingMatches = await getStoredMatches();
+
+      // Merge transactions (avoid duplicates by ID)
+      const existingIds = new Set(existingTransactions.map(t => t.id));
+      const newTransactions = transactions?.filter((t: any) => !existingIds.has(t.id)) || [];
+      const mergedTransactions = [...existingTransactions, ...newTransactions];
+
+      // Merge categories (avoid duplicates by name)
+      const existingCategoryNames = new Set(existingCategories.map((c: any) => c.name.toLowerCase()));
+      const newCategories = categories?.filter((c: any) => !existingCategoryNames.has(c.name.toLowerCase())) || [];
+      const mergedCategories = [...existingCategories, ...newCategories];
+
+      // Merge rules (avoid duplicates by ID)
+      const existingRuleIds = new Set(existingRules.map(r => r.id));
+      const newRules = rules?.filter((r: any) => !existingRuleIds.has(r.id)) || [];
+      const mergedRules = [...existingRules, ...newRules];
+
+      // Merge matches (avoid duplicates by ID)
+      const existingMatchIds = new Set(existingMatches.map(m => m.id));
+      const newMatches = matches?.filter((m: any) => !existingMatchIds.has(m.id)) || [];
+      const mergedMatches = [...existingMatches, ...newMatches];
+
+      // Save merged data
+      await Promise.all([
+        writeFile(TRANSACTIONS_FILE, JSON.stringify(mergedTransactions, null, 2)),
+        writeFile(CATEGORIES_FILE, JSON.stringify({ categories: mergedCategories }, null, 2)),
+        saveRules(mergedRules),
+        saveMatches(mergedMatches)
+      ]);
+
+      // Reload rules into engine
+      rulesEngine.setRules(mergedRules);
+
+      return res.json({
+        success: true,
+        message: 'Data merged successfully',
+        stats: {
+          transactions: { existing: existingTransactions.length, new: newTransactions.length, total: mergedTransactions.length },
+          categories: { existing: existingCategories.length, new: newCategories.length, total: mergedCategories.length },
+          rules: { existing: existingRules.length, new: newRules.length, total: mergedRules.length },
+          matches: { existing: existingMatches.length, new: newMatches.length, total: mergedMatches.length }
+        }
+      });
+    } else {
+      // Replace all data
+      await Promise.all([
+        writeFile(TRANSACTIONS_FILE, JSON.stringify(transactions || [], null, 2)),
+        writeFile(CATEGORIES_FILE, JSON.stringify({ categories: categories || [] }, null, 2)),
+        saveRules(rules || []),
+        saveMatches(matches || [])
+      ]);
+
+      // Reload rules into engine
+      rulesEngine.setRules(rules || []);
+
+      return res.json({
+        success: true,
+        message: 'Data imported successfully',
+        stats: {
+          transactions: transactions?.length || 0,
+          categories: categories?.length || 0,
+          rules: rules?.length || 0,
+          matches: matches?.length || 0
+        }
+      });
+    }
+  } catch (error) {
+    console.error('Error importing data:', error);
+    return res.status(500).json({ error: 'Failed to import data' });
+  }
+});
+
+// GET /stats - Get overall system statistics
+app.get('/stats', async (req: Request, res: Response) => {
+  try {
+    const transactions = await getStoredTransactions();
+    const categories = await readFile(CATEGORIES_FILE, 'utf8')
+      .then(d => JSON.parse(d).categories)
+      .catch(() => []);
+    const matches = await getStoredMatches();
+
+    const now = new Date();
+    const thisMonth = now.getMonth();
+    const thisYear = now.getFullYear();
+
+    // Calculate stats
+    const totalTransactions = transactions.length;
+    const totalSpending = Math.abs(
+      transactions.filter(t => t.amount < 0).reduce((sum, t) => sum + t.amount, 0)
+    );
+    const totalIncome = transactions
+      .filter(t => t.amount > 0)
+      .reduce((sum, t) => sum + t.amount, 0);
+
+    const thisMonthTx = transactions.filter(t => {
+      const d = new Date(t.date);
+      return d.getMonth() === thisMonth && d.getFullYear() === thisYear;
+    });
+    const thisMonthSpending = Math.abs(
+      thisMonthTx.filter(t => t.amount < 0).reduce((sum, t) => sum + t.amount, 0)
+    );
+
+    const uncategorizedCount = transactions.filter(
+      t => !t.category || t.category === '' || t.category === 'Uncategorized'
+    ).length;
+
+    const matchedCount = transactions.filter(t => t.matchId).length;
+
+    // Category breakdown
+    const categoryTotals = new Map<string, number>();
+    transactions.filter(t => t.amount < 0).forEach(t => {
+      const cat = t.category || 'Uncategorized';
+      categoryTotals.set(cat, (categoryTotals.get(cat) || 0) + Math.abs(t.amount));
+    });
+
+    const topCategories = Array.from(categoryTotals.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([name, total]) => {
+        const category = categories.find((c: any) => c.name === name);
+        return { name, total, color: category?.color };
+      });
+
+    // Source breakdown
+    const sourceCounts = new Map<string, number>();
+    transactions.forEach(t => {
+      const source = t.source?.connectorType || 'manual';
+      sourceCounts.set(source, (sourceCounts.get(source) || 0) + 1);
+    });
+
+    return res.json({
+      transactions: {
+        total: totalTransactions,
+        uncategorized: uncategorizedCount,
+        matched: matchedCount
+      },
+      financial: {
+        totalSpending,
+        totalIncome,
+        netBalance: totalIncome - totalSpending,
+        thisMonthSpending
+      },
+      categories: {
+        total: categories.length,
+        topCategories
+      },
+      sources: Object.fromEntries(sourceCounts),
+      matches: {
+        total: matches.length
+      },
+      rules: rulesEngine.getStats()
+    });
+  } catch (error) {
+    console.error('Error getting stats:', error);
+    return res.status(500).json({ error: 'Failed to get stats' });
   }
 });
 

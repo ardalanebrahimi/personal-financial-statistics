@@ -14,6 +14,10 @@ import { MatIconModule } from '@angular/material/icon';
         <div class="nav-content">
           <h2>Financial Analytics</h2>
           <nav>
+            <a mat-button routerLink="/dashboard" routerLinkActive="active">
+              <mat-icon>dashboard</mat-icon>
+              Dashboard
+            </a>
             <a mat-button routerLink="/connectors" routerLinkActive="active">
               <mat-icon>account_balance</mat-icon>
               Connectors
@@ -41,6 +45,10 @@ import { MatIconModule } from '@angular/material/icon';
             <a mat-button routerLink="/ai-assistant" routerLinkActive="active">
               <mat-icon>smart_toy</mat-icon>
               AI Assistant
+            </a>
+            <a mat-button routerLink="/help" routerLinkActive="active">
+              <mat-icon>help_outline</mat-icon>
+              Help
             </a>
           </nav>
         </div>
