@@ -5,3 +5,5 @@ node_modules/
 # Environment files with secrets
 src/environments/environment.ts
 package-lock.json
+src/assets/connectors.json
+.claude/settings.local.json
