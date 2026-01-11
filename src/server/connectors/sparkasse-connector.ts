@@ -6,9 +6,13 @@
 import {
   FinTSClient,
   FinTSConfig,
-  TanMediaRequirement,
   BankingInformation
 } from 'lib-fints';
+
+// TanMediaRequirement values (matches lib-fints codes)
+const TAN_MEDIA_NOT_ALLOWED = 0;
+const TAN_MEDIA_OPTIONAL = 1;
+const TAN_MEDIA_REQUIRED = 2;
 
 import {
   BaseConnector,
@@ -55,7 +59,7 @@ export class SparkasseConnector extends BaseConnector {
   private connected: boolean = false;
   private accounts: AccountInfo[] = [];
   private pendingOperation?: PendingOperation;
-  private selectedTanMethodId?: string;
+  private selectedTanMethodId?: number;
 
   constructor(connectorId: string) {
     super(connectorId);
@@ -179,10 +183,10 @@ export class SparkasseConnector extends BaseConnector {
       const bankingInfo = syncResponse.bankingInformation;
       this.bankingInfo = bankingInfo;
 
-      if (bankingInfo?.BPD?.availableTanMethodIds?.length > 0) {
+      if (bankingInfo?.bpd?.availableTanMethodIds?.length > 0) {
         // Select first available TAN method
         // In production, let user choose or prefer decoupled methods
-        const tanMethodId = bankingInfo.BPD.availableTanMethodIds[0];
+        const tanMethodId = bankingInfo.bpd.availableTanMethodIds[0];
         this.selectedTanMethodId = tanMethodId;
         this.client.selectTanMethod(tanMethodId);
 
@@ -190,7 +194,7 @@ export class SparkasseConnector extends BaseConnector {
 
         // Check if TAN media selection is required
         const tanMethod = this.config.selectedTanMethod;
-        if (tanMethod?.tanMediaRequirement === TanMediaRequirement.Required) {
+        if (tanMethod?.tanMediaRequirement === TAN_MEDIA_REQUIRED) {
           if (tanMethod.activeTanMedia && tanMethod.activeTanMedia.length > 0) {
             this.client.selectTanMedia(tanMethod.activeTanMedia[0]);
             console.log(`[Sparkasse] Selected TAN media: ${tanMethod.activeTanMedia[0]}`);
@@ -545,18 +549,18 @@ export class SparkasseConnector extends BaseConnector {
   private extractAccounts(): AccountInfo[] {
     const accounts: AccountInfo[] = [];
 
-    if (!this.bankingInfo?.UPD?.accounts) {
+    if (!this.bankingInfo?.upd?.bankAccounts) {
       return accounts;
     }
 
-    for (const account of this.bankingInfo.UPD.accounts) {
+    for (const account of this.bankingInfo.upd.bankAccounts) {
       accounts.push({
         accountNumber: account.accountNumber,
         iban: account.iban,
         bic: account.bic,
-        accountType: account.accountType || 'checking',
+        accountType: account.accountType?.toString() || 'checking',
         currency: account.currency || 'EUR',
-        ownerName: account.ownerName
+        ownerName: account.holder1
       });
     }
 

@@ -100,6 +100,12 @@ interface StoredTransaction {
   date: string;
   category: string;
   timestamp: string;
+  beneficiary?: string;
+  source?: {
+    connectorType: string;
+    externalId?: string;
+    importedAt: string;
+  };
 }
 
 async function getStoredTransactions(): Promise<StoredTransaction[]> {
@@ -114,12 +120,12 @@ async function getStoredTransactions(): Promise<StoredTransaction[]> {
   }
 }
 
-async function saveTransaction(transaction: StoredTransaction) {
+async function saveTransaction(transaction: Omit<StoredTransaction, 'timestamp'>) {
   const transactions = await getStoredTransactions();
   transactions.push({
     ...transaction,
     timestamp: new Date().toISOString()
-  });
+  } as StoredTransaction);
   await writeFile(TRANSACTIONS_FILE, JSON.stringify(transactions, null, 2));
 }
 
