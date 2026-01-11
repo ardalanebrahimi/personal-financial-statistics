@@ -1,3 +1,6 @@
 .angular/
 dist/
 node_modules/
+
+# Environment files with secrets
+src/environments/environment.ts
