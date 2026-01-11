@@ -6,6 +6,10 @@ export const routes: Routes = [
     loadComponent: () => import('./features/connectors/connectors.component').then(m => m.ConnectorsComponent)
   },
   {
+    path: 'transactions',
+    loadComponent: () => import('./features/transactions/transactions.component').then(m => m.TransactionsComponent)
+  },
+  {
     path: 'upload',
     loadComponent: () => import('./features/upload/upload.component').then(m => m.UploadComponent)
   },

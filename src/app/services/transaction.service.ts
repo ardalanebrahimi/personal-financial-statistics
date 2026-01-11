@@ -26,7 +26,7 @@ export class TransactionService {
     this.loadTransactions();
   }
 
-  private async loadTransactions() {
+  async loadTransactions() {
     try {
       const response = await firstValueFrom(
         this.http.get<{transactions: Transaction[]}>(this.API_URL)

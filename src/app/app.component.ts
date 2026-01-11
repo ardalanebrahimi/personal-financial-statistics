@@ -18,6 +18,10 @@ import { MatIconModule } from '@angular/material/icon';
               <mat-icon>account_balance</mat-icon>
               Connectors
             </a>
+            <a mat-button routerLink="/transactions" routerLinkActive="active">
+              <mat-icon>receipt_long</mat-icon>
+              Transactions
+            </a>
             <a mat-button routerLink="/upload" routerLinkActive="active">
               <mat-icon>upload</mat-icon>
               Upload Data
