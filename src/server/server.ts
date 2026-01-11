@@ -6,6 +6,7 @@ import cors from 'cors';
 import { Request, Response } from 'express';
 import { connectorManager } from './connectors/connector-manager';
 import type { ConnectorType as CMConnectorType } from './connectors/connector-manager';
+import { getBrowserService } from './browser';
 
 const app = express();
 app.use(express.json());
@@ -57,6 +58,8 @@ interface ConnectorState {
     message: string;
     imageData?: string;
     expiresAt?: string;
+    decoupled?: boolean;
+    reference?: string;
   };
 }
 
@@ -864,6 +867,75 @@ app.get('/connectors/:id/status', async (req: Request, res: Response) => {
     console.error('Error getting connector status:', error);
     return res.status(500).json({ error: 'Failed to get connector status' });
   }
+});
+
+// ==================== BROWSER AUTOMATION ENDPOINTS ====================
+
+// GET /browser/status - Get browser status
+app.get('/browser/status', async (req: Request, res: Response) => {
+  try {
+    const browserService = getBrowserService();
+    return res.json({
+      running: browserService.isRunning()
+    });
+  } catch (error) {
+    console.error('Error getting browser status:', error);
+    return res.status(500).json({ error: 'Failed to get browser status' });
+  }
+});
+
+// POST /browser/launch - Launch browser with Chrome profile
+app.post('/browser/launch', async (req: Request, res: Response) => {
+  try {
+    const browserService = getBrowserService({
+      headless: req.body.headless ?? false,
+      slowMo: req.body.slowMo ?? 50
+    });
+
+    const useDefaultProfile = req.body.useDefaultProfile ?? true;
+    await browserService.launch(useDefaultProfile);
+
+    return res.json({
+      success: true,
+      message: 'Browser launched successfully'
+    });
+  } catch (error) {
+    console.error('Error launching browser:', error);
+    return res.status(500).json({
+      error: error instanceof Error ? error.message : 'Failed to launch browser'
+    });
+  }
+});
+
+// POST /browser/close - Close the browser
+app.post('/browser/close', async (req: Request, res: Response) => {
+  try {
+    const browserService = getBrowserService();
+    await browserService.close();
+
+    return res.json({
+      success: true,
+      message: 'Browser closed'
+    });
+  } catch (error) {
+    console.error('Error closing browser:', error);
+    return res.status(500).json({ error: 'Failed to close browser' });
+  }
+});
+
+// Cleanup browser on server shutdown
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM received, closing browser...');
+  const browserService = getBrowserService();
+  await browserService.close();
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  console.log('SIGINT received, closing browser...');
+  const browserService = getBrowserService();
+  await browserService.close();
+  process.exit(0);
 });
 
 app.listen(3000, () => {

@@ -570,7 +570,7 @@ export class SparkasseConnector extends BaseConnector {
     const messageLC = message.toLowerCase();
     const tanNameLC = tanMethod?.name?.toLowerCase() || '';
 
-    const isDecoupledByProperty = tanMethod?.decoupled === true;
+    const isDecoupledByProperty = !!(tanMethod?.decoupled);
     const isDecoupledByMessage =
       messageLC.includes('app freigeben') ||
       messageLC.includes('in ihrer app') ||

@@ -27,6 +27,7 @@
     "express": "^4.21.2",
     "lib-fints": "^1.4.3",
     "ng2-charts": "^4.0.0",
+    "puppeteer": "^24.34.0",
     "rxjs": "^7.8.0",
     "zone.js": "~0.15.0"
   },
