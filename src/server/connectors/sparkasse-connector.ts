@@ -217,13 +217,21 @@ export class SparkasseConnector extends BaseConnector {
 
         console.log(`[Sparkasse] Selected TAN method: ${tanMethodId}`);
 
-        // Check if TAN media selection is required
+        // Check TAN media requirement
         const tanMethod = this.config.selectedTanMethod;
+        console.log(`[Sparkasse] TAN method name: ${tanMethod?.name}`);
+        console.log(`[Sparkasse] TAN media requirement: ${tanMethod?.tanMediaRequirement}`);
+        console.log(`[Sparkasse] Active TAN media: ${JSON.stringify(tanMethod?.activeTanMedia)}`);
+
+        // Only select TAN media if explicitly required (value 2)
+        // Value 0 = not allowed, Value 1 = optional, Value 2 = required
         if (tanMethod?.tanMediaRequirement === TAN_MEDIA_REQUIRED) {
           if (tanMethod.activeTanMedia && tanMethod.activeTanMedia.length > 0) {
             this.client.selectTanMedia(tanMethod.activeTanMedia[0]);
             console.log(`[Sparkasse] Selected TAN media: ${tanMethod.activeTanMedia[0]}`);
           }
+        } else if (tanMethod?.tanMediaRequirement === TAN_MEDIA_NOT_ALLOWED) {
+          console.log(`[Sparkasse] TAN media not allowed for this method - skipping selection`);
         }
 
         // Re-sync to get account information (UPD)
@@ -390,6 +398,11 @@ export class SparkasseConnector extends BaseConnector {
     try {
       console.log(`[Sparkasse] Fetching transactions for account ${account}`);
       console.log(`[Sparkasse] Date range: ${dateRange.startDate.toISOString()} to ${dateRange.endDate.toISOString()}`);
+
+      // Log current TAN configuration
+      const tanMethod = this.config?.selectedTanMethod;
+      console.log(`[Sparkasse] Current TAN method: ${tanMethod?.name} (${this.selectedTanMethodId})`);
+      console.log(`[Sparkasse] TAN media requirement: ${tanMethod?.tanMediaRequirement}`);
 
       // Check if we can fetch statements for this account
       if (!this.client.canGetAccountStatements(account)) {
