@@ -460,7 +460,7 @@ src/
 | Phase | Status | Start Date | End Date |
 |-------|--------|------------|----------|
 | Phase 1: Foundation | **COMPLETE** | 2026-01-11 | 2026-01-11 |
-| Phase 2: Sparkasse | Not Started | | |
+| Phase 2: Sparkasse | **COMPLETE** | 2026-01-11 | 2026-01-11 |
 | Phase 3: Browser Automation | Not Started | | |
 | Phase 4: N26 | Not Started | | |
 | Phase 5: Mastercard | Not Started | | |

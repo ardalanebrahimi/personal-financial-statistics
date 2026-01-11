@@ -94,12 +94,19 @@ export class ConnectorService {
   /**
    * Initiate connection to a financial service
    */
-  async connect(connectorId: string): Promise<ConnectorState> {
+  async connect(
+    connectorId: string,
+    credentials?: { userId: string; pin: string }
+  ): Promise<ConnectorState> {
     try {
       const response = await firstValueFrom(
-        this.http.post<ConnectorState>(`${this.API_URL}/${connectorId}/connect`, {})
+        this.http.post<ConnectorState>(`${this.API_URL}/${connectorId}/connect`, credentials || {})
       );
       await this.loadConnectors();
+      // Start polling for status updates if connecting
+      if (response.status === ConnectorStatus.CONNECTING) {
+        this.pollConnectorStatus(connectorId);
+      }
       return response;
     } catch (error) {
       console.error('Failed to connect:', error);

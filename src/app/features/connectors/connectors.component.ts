@@ -25,6 +25,7 @@ import {
 } from '../../core/models/connector.model';
 import { AddConnectorDialogComponent } from './add-connector-dialog.component';
 import { MfaDialogComponent } from './mfa-dialog.component';
+import { CredentialsDialogComponent, CredentialsResult } from './credentials-dialog.component';
 
 @Component({
   selector: 'app-connectors',
@@ -498,15 +499,36 @@ export class ConnectorsComponent implements OnInit, OnDestroy {
   }
 
   async connect(connector: ConnectorState): Promise<void> {
-    try {
-      const state = await this.connectorService.connect(connector.config.id);
-      if (state.status === ConnectorStatus.MFA_REQUIRED) {
-        // Polling will handle state updates, MFA dialog will be shown automatically
-        setTimeout(() => this.openMfaDialog(connector), 1500);
+    // Open credentials dialog first
+    const dialogRef = this.dialog.open(CredentialsDialogComponent, {
+      width: '420px',
+      disableClose: false,
+      data: { connector }
+    });
+
+    dialogRef.afterClosed().subscribe(async (credentials: CredentialsResult | undefined) => {
+      if (!credentials) {
+        return; // User cancelled
       }
-    } catch (error) {
-      this.snackBar.open('Failed to connect', 'Close', { duration: 3000 });
-    }
+
+      try {
+        const state = await this.connectorService.connect(
+          connector.config.id,
+          credentials
+        );
+
+        if (state.status === ConnectorStatus.MFA_REQUIRED) {
+          // Show MFA dialog after a short delay
+          setTimeout(() => this.openMfaDialog(connector), 500);
+        } else if (state.status === ConnectorStatus.CONNECTED) {
+          this.snackBar.open('Connected successfully', 'Close', { duration: 3000 });
+        } else if (state.status === ConnectorStatus.ERROR) {
+          this.snackBar.open(state.statusMessage || 'Connection failed', 'Close', { duration: 5000 });
+        }
+      } catch (error) {
+        this.snackBar.open('Failed to connect', 'Close', { duration: 3000 });
+      }
+    });
   }
 
   openMfaDialog(connector: ConnectorState): void {
