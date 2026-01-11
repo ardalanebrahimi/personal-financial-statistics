@@ -8,6 +8,7 @@ import { connectorManager } from './connectors/connector-manager';
 import type { ConnectorType as CMConnectorType } from './connectors/connector-manager';
 import { getBrowserService } from './browser';
 import { TransactionMatcher, applyMatchesToTransactions, TransactionMatch, MatchSuggestion, StoredTransaction as MatcherStoredTransaction } from './matching/matcher';
+import { AmazonConnector } from './connectors/amazon-connector';
 
 const app = express();
 app.use(express.json());
@@ -951,6 +952,91 @@ process.on('SIGINT', async () => {
   const browserService = getBrowserService();
   await browserService.close();
   process.exit(0);
+});
+
+// ==================== AMAZON CSV IMPORT ENDPOINT ====================
+
+// POST /import/amazon - Import Amazon order history CSV
+app.post('/import/amazon', async (req: Request, res: Response) => {
+  try {
+    const { csvData, startDate, endDate } = req.body;
+
+    if (!csvData) {
+      return res.status(400).json({ error: 'CSV data is required' });
+    }
+
+    // Create Amazon connector and import
+    const connector = new AmazonConnector('amazon-import');
+
+    const dateRange = (startDate && endDate) ? {
+      startDate: new Date(startDate),
+      endDate: new Date(endDate)
+    } : undefined;
+
+    const result = connector.importFromCsv(csvData, dateRange);
+
+    if (!result.success && result.transactions.length === 0) {
+      return res.status(400).json({
+        error: 'Failed to import Amazon data',
+        details: result.errors
+      });
+    }
+
+    // Save transactions to storage
+    let newCount = 0;
+    let duplicateCount = 0;
+
+    for (const tx of result.transactions) {
+      // Check for duplicates
+      const existingTx = await getStoredTransactions();
+      const isDuplicate = existingTx.some(
+        existing =>
+          existing.source?.externalId === tx.externalId ||
+          (
+            Math.abs(new Date(existing.date).getTime() - tx.date.getTime()) < 86400000 &&
+            Math.abs(existing.amount - tx.amount) < 0.01 &&
+            existing.description.includes(tx.description.substring(0, 20))
+          )
+      );
+
+      if (!isDuplicate) {
+        await saveTransaction({
+          id: crypto.randomUUID(),
+          date: tx.date.toISOString(),
+          description: tx.description,
+          amount: tx.amount,
+          category: 'Amazon', // Default category
+          beneficiary: tx.beneficiary || 'Amazon',
+          source: {
+            connectorType: 'amazon',
+            externalId: tx.externalId,
+            importedAt: new Date().toISOString()
+          }
+        });
+        newCount++;
+      } else {
+        duplicateCount++;
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: 'Amazon import completed',
+      stats: {
+        ...result.stats,
+        newTransactions: newCount,
+        duplicatesSkipped: duplicateCount
+      },
+      errors: result.errors.length > 0 ? result.errors : undefined
+    });
+
+  } catch (error) {
+    console.error('Error importing Amazon data:', error);
+    return res.status(500).json({
+      error: 'Failed to import Amazon data',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
 });
 
 // ==================== MATCHING HELPERS ====================

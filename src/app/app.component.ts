@@ -26,6 +26,10 @@ import { MatIconModule } from '@angular/material/icon';
               <mat-icon>upload</mat-icon>
               Upload Data
             </a>
+            <a mat-button routerLink="/import/amazon" routerLinkActive="active">
+              <mat-icon>shopping_cart</mat-icon>
+              Amazon Import
+            </a>
             <a mat-button routerLink="/categories" routerLinkActive="active">
               <mat-icon>category</mat-icon>
               Categories

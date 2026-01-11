@@ -8,6 +8,7 @@ import { SparkasseConnector } from './sparkasse-connector';
 import { N26Connector } from './n26-connector';
 import { PayPalConnector } from './paypal-connector';
 import { GebuhrenfreiConnector } from './gebuhrenfrei-connector';
+import { AmazonConnector } from './amazon-connector';
 
 export type ConnectorType = 'sparkasse' | 'n26' | 'paypal' | 'gebuhrenfrei' | 'amazon';
 
@@ -42,8 +43,8 @@ class ConnectorManager {
         connector = new GebuhrenfreiConnector(id);
         break;
       case 'amazon':
-        // TODO: Implement in Phase 7
-        throw new Error('Amazon connector not yet implemented');
+        connector = new AmazonConnector(id);
+        break;
       default:
         throw new Error(`Unknown connector type: ${type}`);
     }
@@ -118,9 +119,8 @@ class ConnectorManager {
       case 'n26':
       case 'paypal':
       case 'gebuhrenfrei':
-        return true;
       case 'amazon':
-        return false;
+        return true;
       default:
         return false;
     }
