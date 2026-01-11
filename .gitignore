@@ -5,5 +5,12 @@ node_modules/
 # Environment files with secrets
 src/environments/environment.ts
 package-lock.json
-src/assets/connectors.json
 .claude/settings.local.json
+
+# Sensitive data files - NEVER commit these
+src/assets/transactions.json
+src/assets/connectors.json
+src/assets/matches.json
+src/assets/rules.json
+src/assets/automation-config.json
+src/assets/categories.json
