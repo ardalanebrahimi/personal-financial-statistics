@@ -33,6 +33,7 @@ enum ConnectorStatus {
 enum ConnectorType {
   SPARKASSE = 'sparkasse',
   N26 = 'n26',
+  PAYPAL = 'paypal',
   GEBUHRENFREI = 'gebuhrenfrei',
   AMAZON = 'amazon'
 }

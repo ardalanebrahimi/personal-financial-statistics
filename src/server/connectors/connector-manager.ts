@@ -6,8 +6,9 @@
 import { BaseConnector, ConnectorCredentials, DateRange, FetchedTransaction } from './base-connector';
 import { SparkasseConnector } from './sparkasse-connector';
 import { N26Connector } from './n26-connector';
+import { PayPalConnector } from './paypal-connector';
 
-export type ConnectorType = 'sparkasse' | 'n26' | 'gebuhrenfrei' | 'amazon';
+export type ConnectorType = 'sparkasse' | 'n26' | 'paypal' | 'gebuhrenfrei' | 'amazon';
 
 export interface ConnectorInstance {
   id: string;
@@ -32,6 +33,9 @@ class ConnectorManager {
         break;
       case 'n26':
         connector = new N26Connector(id);
+        break;
+      case 'paypal':
+        connector = new PayPalConnector(id);
         break;
       case 'gebuhrenfrei':
         // TODO: Implement in Phase 6
@@ -111,6 +115,7 @@ class ConnectorManager {
     switch (type) {
       case 'sparkasse':
       case 'n26':
+      case 'paypal':
         return true;
       case 'gebuhrenfrei':
       case 'amazon':
