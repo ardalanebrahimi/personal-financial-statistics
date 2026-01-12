@@ -15,8 +15,9 @@ src/assets/rules.json
 src/assets/automation-config.json
 src/assets/categories.json
 
-# SQLite database - contains all financial data
+# SQLite database and encryption keys - contains all financial data
 src/data/
 *.db
 *.db-wal
 *.db-shm
+.encryption-key
