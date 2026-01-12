@@ -1,34 +1,28 @@
 // @ts-ignore
 const express = require('express');
-import { writeFile, readFile } from 'fs/promises';
-import { join } from 'path';
 import cors from 'cors';
 import { Request, Response } from 'express';
 import { connectorManager } from './connectors/connector-manager';
 import type { ConnectorType as CMConnectorType } from './connectors/connector-manager';
 import { getBrowserService } from './browser';
-import { TransactionMatcher, applyMatchesToTransactions, TransactionMatch, MatchSuggestion, StoredTransaction as MatcherStoredTransaction } from './matching/matcher';
+import { TransactionMatcher, applyMatchesToTransactions, TransactionMatch as MatcherTransactionMatch, MatchSuggestion, StoredTransaction as MatcherStoredTransaction } from './matching/matcher';
 import { AmazonConnector } from './connectors/amazon-connector';
 import { RulesEngine, Rule, StoredTransaction as RulesStoredTransaction } from './ai/rules-engine';
 import { CrossAccountIntelligence, EnrichedTransaction } from './ai/cross-account-intelligence';
 import { AIAssistant, AssistantContext } from './ai/ai-assistant';
 import { AutomationService, getAutomationService, AutomationConfig } from './automation/automation-service';
 
+// Database imports
+import * as db from './database/database';
+
 const app = express();
 
 // AI Services - Singleton instances
-const RULES_FILE = join(__dirname, '../assets/rules.json');
-const AUTOMATION_CONFIG_FILE = join(__dirname, '../assets/automation-config.json');
 const rulesEngine = new RulesEngine();
 let aiAssistant: AIAssistant | null = null;
 let automationService: AutomationService;
 app.use(express.json());
 app.use(cors());
-
-const CATEGORIES_FILE = join(__dirname, '../assets/categories.json');
-const TRANSACTIONS_FILE = join(__dirname, '../assets/transactions.json');
-const CONNECTORS_FILE = join(__dirname, '../assets/connectors.json');
-const MATCHES_FILE = join(__dirname, '../assets/matches.json');
 
 // Store pending MFA references
 const pendingMFAReferences: Map<string, string> = new Map();
@@ -84,20 +78,19 @@ const connectorStates: Map<string, ConnectorState> = new Map();
 // ==================== CONNECTOR HELPERS ====================
 
 async function getStoredConnectors(): Promise<ConnectorConfig[]> {
-  try {
-    const data = await readFile(CONNECTORS_FILE, 'utf8');
-    const parsed = JSON.parse(data);
-    return parsed.connectors || [];
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return [];
-    }
-    throw error;
-  }
+  return db.getAllConnectors() as ConnectorConfig[];
 }
 
 async function saveConnectors(connectors: ConnectorConfig[]) {
-  await writeFile(CONNECTORS_FILE, JSON.stringify({ connectors }, null, 2));
+  // Update existing connectors
+  for (const conn of connectors) {
+    const existing = db.getConnectorById(conn.id);
+    if (existing) {
+      db.updateConnector(conn as any);
+    } else {
+      db.insertConnector(conn as any);
+    }
+  }
 }
 
 function getConnectorState(config: ConnectorConfig): ConnectorState {
@@ -111,57 +104,33 @@ function getConnectorState(config: ConnectorConfig): ConnectorState {
   };
 }
 
-interface StoredTransaction {
-  id: string;
-  description: string;
-  amount: number;
-  date: string;
-  category: string;
-  timestamp: string;
-  beneficiary?: string;
-  source?: {
-    connectorType: string;
-    externalId?: string;
-    importedAt: string;
-  };
-  // Matching fields
-  matchId?: string;
-  matchInfo?: {
-    matchId: string;
-    isPrimary: boolean;
-    patternType: string;
-    source: string;
-    confidence: string;
-    linkedTransactionIds: string[];
-  };
-  transactionType?: 'expense' | 'income' | 'transfer' | 'internal';
-  excludeFromStats?: boolean;
-}
+// Use database StoredTransaction type
+type StoredTransaction = db.StoredTransaction;
 
 async function getStoredTransactions(): Promise<StoredTransaction[]> {
-  try {
-    const data = await readFile(TRANSACTIONS_FILE, 'utf8');
-    return JSON.parse(data);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return [];
-    }
-    throw error;
-  }
+  return db.getAllTransactions();
 }
 
 async function saveTransaction(transaction: Omit<StoredTransaction, 'timestamp'>) {
-  const transactions = await getStoredTransactions();
-  transactions.push({
-    ...transaction,
-    timestamp: new Date().toISOString()
-  } as StoredTransaction);
-  await writeFile(TRANSACTIONS_FILE, JSON.stringify(transactions, null, 2));
+  const existing = db.getTransactionById(transaction.id);
+  if (existing) {
+    db.updateTransaction({ ...transaction, timestamp: new Date().toISOString() } as StoredTransaction);
+  } else {
+    db.insertTransaction(transaction);
+  }
+}
+
+async function bulkSaveTransactions(transactions: StoredTransaction[]): Promise<void> {
+  db.bulkUpdateTransactions(transactions);
+}
+
+async function deleteTransactionById(id: string): Promise<boolean> {
+  return db.deleteTransaction(id);
 }
 
 app.put('/categories', async (req: Request, res: Response) => {
   try {
-    await writeFile(CATEGORIES_FILE, JSON.stringify({ categories: req.body }, null, 2));
+    db.saveCategories(req.body);
     res.sendStatus(200);
   } catch (error) {
     res.status(500).json({ error: 'Failed to save categories' });
@@ -170,15 +139,11 @@ app.put('/categories', async (req: Request, res: Response) => {
 
 app.get('/categories', async (req: Request, res: Response) => {
   try {
-    const data = await readFile(CATEGORIES_FILE, 'utf8');
-    res.json(JSON.parse(data));
+    const categories = db.getAllCategories();
+    res.json({ categories });
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      res.json({ categories: [] });
-    } else {
-        console.log(error)
-      res.status(500).json({ error: 'Failed to read categories' });
-    }
+    console.log(error);
+    res.status(500).json({ error: 'Failed to read categories' });
   }
 });
 
@@ -346,7 +311,7 @@ app.delete('/transactions/:id', async (req: Request, res: Response) => {
   try {
     const transactions = await getStoredTransactions();
     const filtered = transactions.filter(t => t.id !== req.params['id']);
-    await writeFile(TRANSACTIONS_FILE, JSON.stringify(filtered, null, 2));
+    await bulkSaveTransactions(filtered);
     res.sendStatus(200);
   } catch (error) {
     res.status(500).json({ error: 'Failed to delete transaction' });
@@ -393,7 +358,7 @@ app.put('/transactions/:id', async (req: Request, res: Response) => {
     const index = transactions.findIndex(t => t.id === req.params['id']);
     if (index !== -1) {
       transactions[index] = { ...req.body, timestamp: new Date().toISOString() };
-      await writeFile(TRANSACTIONS_FILE, JSON.stringify(transactions, null, 2));
+      await bulkSaveTransactions(transactions);
       res.sendStatus(200);
     } else {
       res.status(404).json({ error: 'Transaction not found' });
@@ -960,7 +925,7 @@ app.post('/connectors/:id/fetch', async (req: Request, res: Response) => {
             }
 
             if (categorizedCount > 0) {
-              await writeFile(TRANSACTIONS_FILE, JSON.stringify(allTransactions, null, 2));
+              await bulkSaveTransactions(allTransactions);
               console.log(`[Automation] Auto-categorized ${categorizedCount} of ${newCount} new transactions`);
             }
           }
@@ -991,7 +956,7 @@ app.post('/connectors/:id/fetch', async (req: Request, res: Response) => {
               matcherTransactions,
               matchResult.newMatches
             );
-            await writeFile(TRANSACTIONS_FILE, JSON.stringify(updatedTransactions, null, 2));
+            await bulkSaveTransactions(updatedTransactions);
             matchedCount = matchResult.newMatches.length;
             console.log(`[Automation] Created ${matchedCount} new matches`);
           }
@@ -1235,21 +1200,15 @@ app.post('/import/amazon', async (req: Request, res: Response) => {
 
 // ==================== MATCHING HELPERS ====================
 
+// Use database TransactionMatch type
+type TransactionMatch = db.TransactionMatch;
+
 async function getStoredMatches(): Promise<TransactionMatch[]> {
-  try {
-    const data = await readFile(MATCHES_FILE, 'utf8');
-    const parsed = JSON.parse(data);
-    return parsed.matches || [];
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return [];
-    }
-    throw error;
-  }
+  return db.getAllMatches();
 }
 
 async function saveMatches(matches: TransactionMatch[]): Promise<void> {
-  await writeFile(MATCHES_FILE, JSON.stringify({ matches }, null, 2));
+  db.saveMatches(matches);
 }
 
 // ==================== MATCHING ENDPOINTS ====================
@@ -1285,7 +1244,7 @@ app.post('/matching/run', async (req: Request, res: Response) => {
       matcherTransactions,
       result.newMatches
     );
-    await writeFile(TRANSACTIONS_FILE, JSON.stringify(updatedTransactions, null, 2));
+    await bulkSaveTransactions(updatedTransactions);
 
     return res.json({
       success: true,
@@ -1387,7 +1346,7 @@ app.post('/matching/confirm', async (req: Request, res: Response) => {
     })) as MatcherStoredTransaction[];
 
     const updatedTransactions = applyMatchesToTransactions(matcherTransactions, [newMatch]);
-    await writeFile(TRANSACTIONS_FILE, JSON.stringify(updatedTransactions, null, 2));
+    await bulkSaveTransactions(updatedTransactions);
 
     return res.json({ success: true, match: newMatch });
   } catch (error) {
@@ -1454,7 +1413,7 @@ app.post('/matching/manual', async (req: Request, res: Response) => {
     })) as MatcherStoredTransaction[];
 
     const updatedTransactions = applyMatchesToTransactions(matcherTransactions, [newMatch]);
-    await writeFile(TRANSACTIONS_FILE, JSON.stringify(updatedTransactions, null, 2));
+    await bulkSaveTransactions(updatedTransactions);
 
     return res.json({ success: true, match: newMatch });
   } catch (error) {
@@ -1490,7 +1449,7 @@ app.delete('/matching/:id', async (req: Request, res: Response) => {
       }
       return tx;
     });
-    await writeFile(TRANSACTIONS_FILE, JSON.stringify(updatedTransactions, null, 2));
+    await bulkSaveTransactions(updatedTransactions);
 
     return res.json({ success: true, message: 'Match removed' });
   } catch (error) {
@@ -1531,20 +1490,11 @@ app.get('/matching/:id', async (req: Request, res: Response) => {
 // ==================== AI HELPERS ====================
 
 async function getStoredRules(): Promise<Rule[]> {
-  try {
-    const data = await readFile(RULES_FILE, 'utf8');
-    const parsed = JSON.parse(data);
-    return parsed.rules || [];
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return [];
-    }
-    throw error;
-  }
+  return db.getAllRules() as Rule[];
 }
 
 async function saveRules(rules: Rule[]): Promise<void> {
-  await writeFile(RULES_FILE, JSON.stringify({ rules }, null, 2));
+  db.saveRules(rules as any[]);
 }
 
 async function loadRulesIntoEngine(): Promise<void> {
@@ -1553,13 +1503,7 @@ async function loadRulesIntoEngine(): Promise<void> {
 }
 
 async function getCategories(): Promise<{ id: string; name: string; color?: string }[]> {
-  try {
-    const data = await readFile(CATEGORIES_FILE, 'utf8');
-    const parsed = JSON.parse(data);
-    return parsed.categories || [];
-  } catch {
-    return [];
-  }
+  return db.getAllCategories();
 }
 
 function getAIAssistant(): AIAssistant {
@@ -1579,18 +1523,12 @@ automationService = getAutomationService(rulesEngine);
 
 // Load automation config
 async function loadAutomationConfig(): Promise<void> {
-  try {
-    const data = await readFile(AUTOMATION_CONFIG_FILE, 'utf8');
-    const config = JSON.parse(data);
-    automationService.setConfig(config);
-  } catch (error) {
-    // Use defaults if no config file
-    console.log('[Automation] Using default configuration');
-  }
+  const config = db.getAutomationConfig();
+  automationService.setConfig(config);
 }
 
 async function saveAutomationConfig(config: AutomationConfig): Promise<void> {
-  await writeFile(AUTOMATION_CONFIG_FILE, JSON.stringify(config, null, 2));
+  db.saveAutomationConfig(config);
 }
 
 // Load automation config on startup
@@ -1984,12 +1922,10 @@ app.post('/ai/analyze-all', async (req: Request, res: Response) => {
 // GET /export - Export all data for backup
 app.get('/export', async (req: Request, res: Response) => {
   try {
-    const [transactions, categories, rules, matches] = await Promise.all([
-      getStoredTransactions(),
-      readFile(CATEGORIES_FILE, 'utf8').then(d => JSON.parse(d).categories).catch(() => []),
-      getStoredRules(),
-      getStoredMatches()
-    ]);
+    const transactions = await getStoredTransactions();
+    const categories = db.getAllCategories();
+    const rules = await getStoredRules();
+    const matches = await getStoredMatches();
 
     const exportData = {
       version: '1.0',
@@ -2015,9 +1951,7 @@ app.post('/import', async (req: Request, res: Response) => {
     if (merge) {
       // Merge with existing data
       const existingTransactions = await getStoredTransactions();
-      const existingCategories = await readFile(CATEGORIES_FILE, 'utf8')
-        .then(d => JSON.parse(d).categories)
-        .catch(() => []);
+      const existingCategories = db.getAllCategories();
       const existingRules = await getStoredRules();
       const existingMatches = await getStoredMatches();
 
@@ -2042,12 +1976,10 @@ app.post('/import', async (req: Request, res: Response) => {
       const mergedMatches = [...existingMatches, ...newMatches];
 
       // Save merged data
-      await Promise.all([
-        writeFile(TRANSACTIONS_FILE, JSON.stringify(mergedTransactions, null, 2)),
-        writeFile(CATEGORIES_FILE, JSON.stringify({ categories: mergedCategories }, null, 2)),
-        saveRules(mergedRules),
-        saveMatches(mergedMatches)
-      ]);
+      await bulkSaveTransactions(mergedTransactions);
+      db.saveCategories(mergedCategories);
+      saveRules(mergedRules);
+      await saveMatches(mergedMatches);
 
       // Reload rules into engine
       rulesEngine.setRules(mergedRules);
@@ -2064,12 +1996,10 @@ app.post('/import', async (req: Request, res: Response) => {
       });
     } else {
       // Replace all data
-      await Promise.all([
-        writeFile(TRANSACTIONS_FILE, JSON.stringify(transactions || [], null, 2)),
-        writeFile(CATEGORIES_FILE, JSON.stringify({ categories: categories || [] }, null, 2)),
-        saveRules(rules || []),
-        saveMatches(matches || [])
-      ]);
+      await bulkSaveTransactions(transactions || []);
+      db.saveCategories(categories || []);
+      saveRules(rules || []);
+      await saveMatches(matches || []);
 
       // Reload rules into engine
       rulesEngine.setRules(rules || []);
@@ -2175,7 +2105,7 @@ app.post('/automation/categorize', async (req: Request, res: Response) => {
 
     // Save updated transactions
     if (updatedCount > 0) {
-      await writeFile(TRANSACTIONS_FILE, JSON.stringify(transactions, null, 2));
+      await bulkSaveTransactions(transactions);
     }
 
     return res.json({
@@ -2248,7 +2178,7 @@ app.post('/automation/process-new', async (req: Request, res: Response) => {
     }
 
     // Save transactions before matching
-    await writeFile(TRANSACTIONS_FILE, JSON.stringify(transactions, null, 2));
+    await bulkSaveTransactions(transactions);
 
     // Run matching if enabled
     let matchedCount = 0;
@@ -2277,7 +2207,7 @@ app.post('/automation/process-new', async (req: Request, res: Response) => {
           matcherTransactions,
           matchResult.newMatches
         );
-        await writeFile(TRANSACTIONS_FILE, JSON.stringify(updatedTransactions, null, 2));
+        await bulkSaveTransactions(updatedTransactions);
         matchedCount = matchResult.newMatches.length;
       }
     }
@@ -2299,9 +2229,7 @@ app.post('/automation/process-new', async (req: Request, res: Response) => {
 app.get('/stats', async (req: Request, res: Response) => {
   try {
     const transactions = await getStoredTransactions();
-    const categories = await readFile(CATEGORIES_FILE, 'utf8')
-      .then(d => JSON.parse(d).categories)
-      .catch(() => []);
+    const categories = db.getAllCategories();
     const matches = await getStoredMatches();
 
     const now = new Date();

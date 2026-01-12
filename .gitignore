@@ -14,3 +14,9 @@ src/assets/matches.json
 src/assets/rules.json
 src/assets/automation-config.json
 src/assets/categories.json
+
+# SQLite database - contains all financial data
+src/data/
+*.db
+*.db-wal
+*.db-shm
