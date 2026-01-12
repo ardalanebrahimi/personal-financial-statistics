@@ -766,5 +766,24 @@ export function closeDatabase(): void {
   db.close();
 }
 
-// Run migration on module load
-migrateFromJson();
+// Initialize default categories if none exist
+const categoryCount = (db.prepare(`SELECT COUNT(*) as count FROM categories`).get() as any).count;
+if (categoryCount === 0) {
+  console.log('[Database] Initializing default categories...');
+  const defaultCategories: Category[] = [
+    { id: '1', name: 'Groceries', description: 'Food and household items', color: '#4CAF50' },
+    { id: '2', name: 'Transportation', description: 'Public transit, gas, car expenses', color: '#2196F3' },
+    { id: '3', name: 'Utilities', description: 'Electricity, water, internet', color: '#FF9800' },
+    { id: '4', name: 'Entertainment', description: 'Movies, games, subscriptions', color: '#9C27B0' },
+    { id: '5', name: 'Housing', description: 'Rent, mortgage, repairs', color: '#795548' },
+    { id: '6', name: 'Insurance', description: 'Health, car, home insurance', color: '#607D8B' },
+    { id: '7', name: 'Savings', description: 'Transfers to savings accounts', color: '#00BCD4' },
+    { id: '8', name: 'Income', description: 'Salary, freelance, dividends', color: '#8BC34A' },
+    { id: '9', name: 'Shopping', description: 'Clothing, electronics, online purchases', color: '#E91E63' },
+    { id: '10', name: 'Dining', description: 'Restaurants, cafes, takeout', color: '#FF5722' }
+  ];
+  saveCategories(defaultCategories);
+  console.log('[Database] Default categories created');
+}
+
+console.log('[Database] SQLite database initialized at:', DB_PATH);

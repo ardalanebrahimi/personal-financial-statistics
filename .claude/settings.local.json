@@ -31,7 +31,8 @@
       "Bash(FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch:*)",
       "Bash(git stash push:*)",
       "Bash(git stash pop:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(dir \"C:\\\\Users\\\\ardal\\\\source\\\\personal-financial-statistics\\\\src\\\\assets\")"
     ]
   }
 }
