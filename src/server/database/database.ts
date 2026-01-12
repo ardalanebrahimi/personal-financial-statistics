@@ -73,7 +73,11 @@ CREATE TABLE IF NOT EXISTS connectors (
   account_id TEXT,
   last_sync_at TEXT,
   last_sync_status TEXT CHECK(last_sync_status IN ('success', 'partial', 'failed')),
-  last_sync_error TEXT
+  last_sync_error TEXT,
+  -- Encrypted credentials storage
+  credentials_encrypted TEXT,
+  credentials_saved_at TEXT,
+  auto_connect INTEGER DEFAULT 0
 );
 
 -- Matches table
@@ -377,26 +381,13 @@ export interface ConnectorConfig {
   lastSyncAt?: string;
   lastSyncStatus?: 'success' | 'partial' | 'failed';
   lastSyncError?: string;
+  // Credential storage
+  credentialsEncrypted?: string;
+  credentialsSavedAt?: string;
+  autoConnect?: boolean;
 }
 
-export function getAllConnectors(): ConnectorConfig[] {
-  const rows = db.prepare(`SELECT * FROM connectors`).all() as any[];
-  return rows.map(row => ({
-    id: row.id,
-    type: row.type,
-    name: row.name,
-    enabled: row.enabled === 1,
-    bankCode: row.bank_code || undefined,
-    accountId: row.account_id || undefined,
-    lastSyncAt: row.last_sync_at || undefined,
-    lastSyncStatus: row.last_sync_status || undefined,
-    lastSyncError: row.last_sync_error || undefined
-  }));
-}
-
-export function getConnectorById(id: string): ConnectorConfig | null {
-  const row = db.prepare(`SELECT * FROM connectors WHERE id = ?`).get(id) as any;
-  if (!row) return null;
+function rowToConnector(row: any): ConnectorConfig {
   return {
     id: row.id,
     type: row.type,
@@ -406,14 +397,38 @@ export function getConnectorById(id: string): ConnectorConfig | null {
     accountId: row.account_id || undefined,
     lastSyncAt: row.last_sync_at || undefined,
     lastSyncStatus: row.last_sync_status || undefined,
-    lastSyncError: row.last_sync_error || undefined
+    lastSyncError: row.last_sync_error || undefined,
+    credentialsEncrypted: row.credentials_encrypted || undefined,
+    credentialsSavedAt: row.credentials_saved_at || undefined,
+    autoConnect: row.auto_connect === 1
   };
+}
+
+export function getAllConnectors(): ConnectorConfig[] {
+  const rows = db.prepare(`SELECT * FROM connectors`).all() as any[];
+  return rows.map(rowToConnector);
+}
+
+export function getConnectorById(id: string): ConnectorConfig | null {
+  const row = db.prepare(`SELECT * FROM connectors WHERE id = ?`).get(id) as any;
+  if (!row) return null;
+  return rowToConnector(row);
+}
+
+export function getConnectorsWithCredentials(): ConnectorConfig[] {
+  const rows = db.prepare(`
+    SELECT * FROM connectors
+    WHERE credentials_encrypted IS NOT NULL AND auto_connect = 1
+  `).all() as any[];
+  return rows.map(rowToConnector);
 }
 
 export function insertConnector(connector: ConnectorConfig): void {
   db.prepare(`
-    INSERT INTO connectors (id, type, name, enabled, bank_code, account_id, last_sync_at, last_sync_status, last_sync_error)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO connectors (id, type, name, enabled, bank_code, account_id,
+      last_sync_at, last_sync_status, last_sync_error,
+      credentials_encrypted, credentials_saved_at, auto_connect)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     connector.id,
     connector.type,
@@ -423,7 +438,10 @@ export function insertConnector(connector: ConnectorConfig): void {
     connector.accountId || null,
     connector.lastSyncAt || null,
     connector.lastSyncStatus || null,
-    connector.lastSyncError || null
+    connector.lastSyncError || null,
+    connector.credentialsEncrypted || null,
+    connector.credentialsSavedAt || null,
+    connector.autoConnect ? 1 : 0
   );
 }
 
@@ -431,7 +449,8 @@ export function updateConnector(connector: ConnectorConfig): void {
   db.prepare(`
     UPDATE connectors SET
       type = ?, name = ?, enabled = ?, bank_code = ?, account_id = ?,
-      last_sync_at = ?, last_sync_status = ?, last_sync_error = ?
+      last_sync_at = ?, last_sync_status = ?, last_sync_error = ?,
+      credentials_encrypted = ?, credentials_saved_at = ?, auto_connect = ?
     WHERE id = ?
   `).run(
     connector.type,
@@ -442,6 +461,9 @@ export function updateConnector(connector: ConnectorConfig): void {
     connector.lastSyncAt || null,
     connector.lastSyncStatus || null,
     connector.lastSyncError || null,
+    connector.credentialsEncrypted || null,
+    connector.credentialsSavedAt || null,
+    connector.autoConnect ? 1 : 0,
     connector.id
   );
 }

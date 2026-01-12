@@ -14,6 +14,7 @@ import { AutomationService, getAutomationService, AutomationConfig } from './aut
 
 // Database imports
 import * as db from './database/database';
+import { encryptCredentials, decryptCredentials } from './utils/encryption';
 
 const app = express();
 
@@ -422,6 +423,46 @@ app.delete('/connectors/:id', async (req: Request, res: Response) => {
   }
 });
 
+// DELETE /connectors/:id/credentials - Clear saved credentials for a connector
+app.delete('/connectors/:id/credentials', async (req: Request, res: Response) => {
+  try {
+    const connector = db.getConnectorById(req.params['id']);
+    if (!connector) {
+      return res.status(404).json({ error: 'Connector not found' });
+    }
+
+    connector.credentialsEncrypted = undefined;
+    connector.credentialsSavedAt = undefined;
+    connector.autoConnect = false;
+    db.updateConnector(connector);
+
+    console.log(`[Connector] Cleared saved credentials for ${connector.name}`);
+    return res.json({ success: true, message: 'Credentials cleared' });
+  } catch (error) {
+    console.error('Error clearing credentials:', error);
+    return res.status(500).json({ error: 'Failed to clear credentials' });
+  }
+});
+
+// GET /connectors/:id/has-credentials - Check if connector has saved credentials
+app.get('/connectors/:id/has-credentials', async (req: Request, res: Response) => {
+  try {
+    const connector = db.getConnectorById(req.params['id']);
+    if (!connector) {
+      return res.status(404).json({ error: 'Connector not found' });
+    }
+
+    return res.json({
+      hasCredentials: !!connector.credentialsEncrypted,
+      savedAt: connector.credentialsSavedAt,
+      autoConnect: connector.autoConnect
+    });
+  } catch (error) {
+    console.error('Error checking credentials:', error);
+    return res.status(500).json({ error: 'Failed to check credentials' });
+  }
+});
+
 // POST /connectors/:id/connect - Initiate connection to the financial service
 app.post('/connectors/:id/connect', async (req: Request, res: Response) => {
   try {
@@ -432,10 +473,39 @@ app.post('/connectors/:id/connect', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Connector not found' });
     }
 
-    // Get credentials from request body
-    const { userId, pin } = req.body;
+    // Get credentials from request body or stored credentials
+    let { userId, pin, saveCredentials } = req.body;
+
+    // If no credentials provided, try to use saved credentials
+    if ((!userId || !pin) && connectorConfig.credentialsEncrypted) {
+      try {
+        const savedCreds = decryptCredentials(connectorConfig.credentialsEncrypted);
+        userId = savedCreds.userId;
+        pin = savedCreds.pin;
+        console.log(`[Connector] Using saved credentials for ${connectorConfig.name}`);
+      } catch (error) {
+        console.error('[Connector] Failed to decrypt saved credentials:', error);
+        return res.status(400).json({ error: 'Saved credentials invalid. Please provide new credentials.' });
+      }
+    }
+
     if (!userId || !pin) {
-      return res.status(400).json({ error: 'Credentials required (userId, pin)' });
+      // Check if there are saved credentials available
+      const hasSavedCredentials = !!connectorConfig.credentialsEncrypted;
+      return res.status(400).json({
+        error: 'Credentials required (userId, pin)',
+        hasSavedCredentials
+      });
+    }
+
+    // Save credentials if requested
+    if (saveCredentials) {
+      const encrypted = encryptCredentials({ userId, pin });
+      connectorConfig.credentialsEncrypted = encrypted;
+      connectorConfig.credentialsSavedAt = new Date().toISOString();
+      connectorConfig.autoConnect = true;
+      db.updateConnector(connectorConfig);
+      console.log(`[Connector] Credentials saved for ${connectorConfig.name}`);
     }
 
     // Update state to connecting
@@ -2309,6 +2379,84 @@ app.get('/stats', async (req: Request, res: Response) => {
   }
 });
 
-app.listen(3000, () => {
+// ==================== AUTO-RECONNECT ====================
+
+async function autoReconnectConnectors(): Promise<void> {
+  const connectorsWithCreds = db.getConnectorsWithCredentials();
+
+  if (connectorsWithCreds.length === 0) {
+    console.log('[Auto-Reconnect] No connectors with saved credentials');
+    return;
+  }
+
+  console.log(`[Auto-Reconnect] Found ${connectorsWithCreds.length} connector(s) with saved credentials`);
+
+  for (const connectorConfig of connectorsWithCreds) {
+    try {
+      console.log(`[Auto-Reconnect] Attempting to connect ${connectorConfig.name}...`);
+
+      // Skip if connector type is not implemented
+      if (!connectorManager.isImplemented(connectorConfig.type as CMConnectorType)) {
+        console.log(`[Auto-Reconnect] Skipping ${connectorConfig.name} - connector type not implemented`);
+        continue;
+      }
+
+      // Decrypt credentials
+      const credentials = decryptCredentials(connectorConfig.credentialsEncrypted!);
+
+      // Initialize connector
+      const connector = await connectorManager.initializeConnector(
+        connectorConfig.id,
+        connectorConfig.type as CMConnectorType,
+        {
+          userId: credentials.userId,
+          pin: credentials.pin,
+          bankCode: connectorConfig.bankCode
+        }
+      );
+
+      // Attempt connection
+      const result = await connector.connect();
+
+      if (result.success) {
+        const state: ConnectorState = {
+          config: connectorConfig,
+          status: ConnectorStatus.CONNECTED,
+          statusMessage: `Auto-connected. Found ${result.accounts?.length || 0} accounts.`
+        };
+        connectorStates.set(connectorConfig.id, state);
+        console.log(`[Auto-Reconnect] Successfully connected ${connectorConfig.name}`);
+      } else if (result.requiresMFA) {
+        // MFA required - set state but can't auto-complete
+        const state: ConnectorState = {
+          config: connectorConfig,
+          status: ConnectorStatus.MFA_REQUIRED,
+          statusMessage: 'Auto-connect requires MFA - please confirm manually',
+          mfaChallenge: result.mfaChallenge ? {
+            type: result.mfaChallenge.type,
+            message: result.mfaChallenge.message,
+            decoupled: result.mfaChallenge.decoupled || false,
+            reference: result.mfaChallenge.reference
+          } : undefined
+        };
+        connectorStates.set(connectorConfig.id, state);
+        console.log(`[Auto-Reconnect] ${connectorConfig.name} requires MFA confirmation`);
+      } else {
+        console.log(`[Auto-Reconnect] Failed to connect ${connectorConfig.name}: ${result.error}`);
+      }
+    } catch (error) {
+      console.error(`[Auto-Reconnect] Error connecting ${connectorConfig.name}:`, error);
+    }
+  }
+}
+
+app.listen(3000, async () => {
   console.log('Server running on port 3000');
+
+  // Auto-reconnect connectors with saved credentials
+  setTimeout(() => {
+    autoReconnectConnectors().catch(err =>
+      console.error('[Auto-Reconnect] Failed:', err)
+    );
+  }, 2000); // Delay to allow server to fully start
 });
