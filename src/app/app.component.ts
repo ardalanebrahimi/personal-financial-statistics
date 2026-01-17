@@ -19,17 +19,9 @@ import { AiFabComponent } from './shared/ai-fab/ai-fab.component';
               <mat-icon>dashboard</mat-icon>
               Dashboard
             </a>
-            <a mat-button routerLink="/connectors" routerLinkActive="active">
-              <mat-icon>account_balance</mat-icon>
-              Connectors
-            </a>
             <a mat-button routerLink="/transactions" routerLinkActive="active">
               <mat-icon>receipt_long</mat-icon>
               Transactions
-            </a>
-            <a mat-button routerLink="/categories" routerLinkActive="active">
-              <mat-icon>category</mat-icon>
-              Categories
             </a>
             <a mat-button routerLink="/analytics" routerLinkActive="active">
               <mat-icon>analytics</mat-icon>
@@ -38,10 +30,6 @@ import { AiFabComponent } from './shared/ai-fab/ai-fab.component';
             <a mat-button routerLink="/settings" routerLinkActive="active">
               <mat-icon>settings</mat-icon>
               Settings
-            </a>
-            <a mat-button routerLink="/help" routerLinkActive="active">
-              <mat-icon>help_outline</mat-icon>
-              Help
             </a>
           </nav>
         </div>
