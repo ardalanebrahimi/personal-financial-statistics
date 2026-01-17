@@ -1,6 +1,6 @@
 import { Injectable } from '@angular/core';
 import { Category } from '../core/models/transaction.model';
-import { BehaviorSubject } from 'rxjs';
+import { BehaviorSubject, Observable } from 'rxjs';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
@@ -10,25 +10,33 @@ import { environment } from '../../environments/environment';
 })
 export class CategoryService {
   private readonly API_URL = `${environment.apiUrl}/categories`;
-  private categories = new BehaviorSubject<Category[]>([]);
+  private categoriesSubject = new BehaviorSubject<Category[]>([]);
+  private initialized = false;
+
+  // Expose as Observable for components to subscribe
+  categories$ = this.categoriesSubject.asObservable();
 
   constructor(private http: HttpClient) {
     this.initializeCategories();
   }
 
   private async initializeCategories() {
+    if (this.initialized) return;
+
     try {
       const data = await firstValueFrom(
         this.http.get<{categories: Category[]}>(`${this.API_URL}`)
       );
       if (data?.categories) {
-        this.categories.next(data.categories);
+        this.categoriesSubject.next(data.categories);
       } else {
-        this.categories.next([]); // Initialize with empty array if file is empty
+        this.categoriesSubject.next([]);
       }
+      this.initialized = true;
     } catch (error) {
       console.warn('Could not load categories from API, starting with empty list');
-      this.categories.next([]); // Initialize with empty array if file doesn't exist
+      this.categoriesSubject.next([]);
+      this.initialized = true;
     }
   }
 
@@ -43,22 +51,28 @@ export class CategoryService {
     }
   }
 
+  // Synchronous getter for current value (for backwards compatibility)
   getCategories(): Category[] {
-    if (!this.categories.value.length) {
-      this.initializeCategories();
+    return this.categoriesSubject.value;
+  }
+
+  // Async method to ensure categories are loaded
+  async loadCategories(): Promise<Category[]> {
+    if (!this.initialized) {
+      await this.initializeCategories();
     }
-    return this.categories.value;
+    return this.categoriesSubject.value;
   }
 
   async addCategory(category: Category) {
-    const categories = [...this.categories.value, category];
-    this.categories.next(categories);
+    const categories = [...this.categoriesSubject.value, category];
+    this.categoriesSubject.next(categories);
     await this.saveToFile(categories);
   }
 
   async deleteCategory(id: string) {
-    const categories = this.categories.value.filter(c => c.id !== id);
-    this.categories.next(categories);
+    const categories = this.categoriesSubject.value.filter(c => c.id !== id);
+    this.categoriesSubject.next(categories);
     await this.saveToFile(categories);
   }
 }

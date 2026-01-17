@@ -456,6 +456,18 @@ export class AIAssistant {
    * Process complex query with AI
    */
   private async processWithAI(userMessage: string): Promise<AssistantResponse> {
+    // Check if API key is configured
+    if (!this.apiKey || this.apiKey.trim() === '') {
+      return {
+        message: 'The AI assistant is not configured. Please set the OPENAI_API_KEY environment variable to enable AI-powered responses.\n\nIn the meantime, try these commands:\n- "Show recent transactions"\n- "How much did I spend this month?"\n- "Top categories"\n- "Compare to last month"',
+        suggestedActions: [
+          'Show recent transactions',
+          'Total spending this month',
+          'Top categories this month'
+        ]
+      };
+    }
+
     // Prepare context summary for AI
     const contextSummary = this.prepareContextSummary();
 
@@ -496,7 +508,9 @@ Guidelines:
       });
 
       if (!response.ok) {
-        throw new Error('AI API request failed');
+        const errorData = await response.json().catch(() => ({}));
+        console.error('OpenAI API error:', response.status, errorData);
+        throw new Error(`API request failed: ${response.status}`);
       }
 
       const data = await response.json();
@@ -521,9 +535,14 @@ Guidelines:
 
       return { message: aiMessage };
     } catch (error) {
+      console.error('AI processing error:', error);
       return {
-        message: 'Sorry, I encountered an error processing your request. Please try again.',
-        suggestedActions: ['Try a simpler question', 'Check your API key configuration']
+        message: 'Sorry, I encountered an error connecting to the AI service. Try one of these commands that work offline:',
+        suggestedActions: [
+          'Show recent transactions',
+          'Total spending this month',
+          'Top categories this month'
+        ]
       };
     }
   }

@@ -30,6 +30,7 @@ import { Transaction, Category } from '../../core/models/transaction.model';
          [class.income]="transaction.amount > 0"
          [class.matched]="transaction.matchInfo"
          [class.editing]="isEditing"
+         [class.compact]="compact"
          (click)="onCardClick($event)"
          (dblclick)="toggleExpand()"
          [attr.tabindex]="0"
@@ -442,6 +443,80 @@ import { Transaction, Category } from '../../core/models/transaction.model';
     .delete-action {
       color: #d32f2f;
     }
+
+    /* Compact mode styles */
+    .transaction-card.compact {
+      padding: 6px 12px;
+      margin-bottom: 2px;
+      border-radius: 4px;
+    }
+
+    .transaction-card.compact .card-main {
+      gap: 12px;
+    }
+
+    .transaction-card.compact .card-left {
+      min-width: 80px;
+    }
+
+    .transaction-card.compact .date-column {
+      flex-direction: row;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .transaction-card.compact .date {
+      font-size: 12px;
+    }
+
+    .transaction-card.compact .weekday {
+      display: none;
+    }
+
+    .transaction-card.compact .description {
+      font-size: 13px;
+    }
+
+    .transaction-card.compact .beneficiary-row {
+      display: none;
+    }
+
+    .transaction-card.compact .amount {
+      font-size: 13px;
+    }
+
+    .transaction-card.compact .category-chip {
+      font-size: 10px;
+      min-height: 20px;
+      padding: 0 6px;
+    }
+
+    .transaction-card.compact .card-right {
+      min-width: 160px;
+      gap: 8px;
+    }
+
+    .transaction-card.compact .card-actions {
+      opacity: 1;
+    }
+
+    .transaction-card.compact .card-actions button {
+      width: 28px;
+      height: 28px;
+      line-height: 28px;
+    }
+
+    .transaction-card.compact .card-actions mat-icon {
+      font-size: 18px;
+      width: 18px;
+      height: 18px;
+    }
+
+    .transaction-card.compact .source-indicator mat-icon {
+      font-size: 16px;
+      width: 16px;
+      height: 16px;
+    }
   `]
 })
 export class TransactionCardComponent {
@@ -449,6 +524,7 @@ export class TransactionCardComponent {
   @Input() categories: Category[] = [];
   @Input() selected = false;
   @Input() expanded = false;
+  @Input() compact = false;
 
   @Output() selectTransaction = new EventEmitter<Transaction>();
   @Output() editTransaction = new EventEmitter<Transaction>();

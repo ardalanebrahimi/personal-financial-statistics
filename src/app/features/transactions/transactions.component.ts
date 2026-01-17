@@ -273,6 +273,7 @@ interface UndoAction {
                 [categories]="categories"
                 [selected]="isSelected(transaction)"
                 [expanded]="expandedIds.has(transaction.id)"
+                [compact]="viewMode === 'compact'"
                 (selectTransaction)="onSelectTransaction($event, $event)"
                 (editTransaction)="onEditTransaction($event)"
                 (deleteTransaction)="onDeleteTransaction($event)"
@@ -764,8 +765,11 @@ export class TransactionsComponent implements OnInit, OnDestroy {
   async loadData() {
     this.isLoading = true;
 
-    // Load categories
-    this.categories = this.categoryService.getCategories();
+    // Subscribe to categories
+    const catSub = this.categoryService.categories$.subscribe(categories => {
+      this.categories = categories;
+    });
+    this.subscriptions.push(catSub);
 
     // Subscribe to transactions
     const sub = this.transactionService.transactions$.subscribe(transactions => {
