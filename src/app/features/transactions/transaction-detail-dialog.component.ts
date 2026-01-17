@@ -17,6 +17,7 @@ export interface TransactionDetailDialogData {
   transaction: Transaction;
   categories: Category[];
   linkedTransactions?: Transaction[];
+  linkedOrders?: Transaction[]; // Amazon orders linked to this bank transaction
 }
 
 export interface TransactionDetailDialogResult {
@@ -112,6 +113,31 @@ export interface TransactionDetailDialogResult {
               <span class="label">External ID:</span>
               <span class="value mono">{{ transaction.source.externalId }}</span>
             </div>
+          </div>
+        </div>
+
+        <!-- Linked Orders (Amazon) -->
+        <div class="linked-orders-section" *ngIf="data.linkedOrders?.length">
+          <mat-divider></mat-divider>
+          <h3>
+            <mat-icon class="section-icon">shopping_cart</mat-icon>
+            Linked Orders ({{ data.linkedOrders?.length }})
+          </h3>
+          <p class="section-hint">These Amazon orders provide context for this bank transaction</p>
+          <div class="linked-list">
+            <div class="linked-item order-item" *ngFor="let order of data.linkedOrders">
+              <div class="linked-info">
+                <span class="linked-date">{{ order.date | date:'shortDate' }}</span>
+                <span class="linked-desc order-desc">{{ order.description | slice:0:50 }}{{ order.description.length > 50 ? '...' : '' }}</span>
+              </div>
+              <span class="linked-amount" [class.negative]="order.amount < 0">
+                {{ order.amount | currency:'EUR':'symbol':'1.2-2' }}
+              </span>
+            </div>
+          </div>
+          <div class="order-total">
+            <span>Total orders:</span>
+            <span class="total-amount">{{ getLinkedOrdersTotal() | currency:'EUR':'symbol':'1.2-2' }}</span>
           </div>
         </div>
 
@@ -257,15 +283,53 @@ export interface TransactionDetailDialogResult {
       cursor: help;
     }
 
-    .source-section, .linked-section, .history-section {
+    .source-section, .linked-section, .linked-orders-section, .history-section {
       padding: 8px 0;
     }
 
-    .source-section h3, .linked-section h3, .history-section h3 {
+    .source-section h3, .linked-section h3, .linked-orders-section h3, .history-section h3 {
       font-size: 14px;
       font-weight: 500;
       color: #666;
       margin: 0 0 12px 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .section-icon {
+      font-size: 18px;
+      width: 18px;
+      height: 18px;
+    }
+
+    .section-hint {
+      font-size: 12px;
+      color: #888;
+      margin: -8px 0 12px 0;
+    }
+
+    .order-item {
+      background: #fff3e0 !important;
+      border-left: 3px solid #ff9800;
+    }
+
+    .order-desc {
+      font-size: 13px;
+    }
+
+    .order-total {
+      display: flex;
+      justify-content: space-between;
+      padding: 12px;
+      margin-top: 8px;
+      background: #f5f5f5;
+      border-radius: 4px;
+      font-weight: 500;
+    }
+
+    .total-amount {
+      color: #f44336;
     }
 
     .info-row {
@@ -398,5 +462,10 @@ export class TransactionDetailDialogComponent {
       action,
       transaction: action === 'save' ? this.transaction : this.data.transaction
     });
+  }
+
+  getLinkedOrdersTotal(): number {
+    if (!this.data.linkedOrders?.length) return 0;
+    return this.data.linkedOrders.reduce((sum, order) => sum + order.amount, 0);
   }
 }

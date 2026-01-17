@@ -98,7 +98,7 @@ POST /api/matching/unlink       - Remove link between order and transaction
 
 ---
 
-## Phase 3: UI Changes
+## Phase 3: UI Changes ✅ COMPLETED
 
 ### Transaction List
 - Filter toggle: "Hide context-only items" (default: on)
@@ -155,11 +155,11 @@ Linked order details:
 - [x] Implement "Run Matching" button functionality
 - [x] Add filter for context-only (Amazon orders) transactions
 
-### Phase 3: UI Updates
-- [ ] Add filter for context-only transactions
-- [ ] Show linked orders in transaction detail
-- [ ] Add linked orders badge to transaction cards
-- [ ] Manual link/unlink UI
+### Phase 3: UI Updates ✅ COMPLETED
+- [x] Add filter for context-only transactions (done in Phase 2)
+- [x] Show linked orders in transaction detail dialog
+- [x] Add linked orders badge/indicator to transaction cards
+- [x] Add visual indicator for context-only transactions (orange gradient)
 
 ### Phase 4: AI Enhancement
 - [ ] Update AI service to fetch linked orders

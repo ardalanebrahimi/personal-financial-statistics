@@ -31,6 +31,8 @@ import { Transaction, Category } from '../../core/models/transaction.model';
          [class.matched]="transaction.matchInfo"
          [class.editing]="isEditing"
          [class.compact]="compact"
+         [class.context-only]="transaction.isContextOnly"
+         [class.has-linked-orders]="transaction.linkedOrderIds?.length"
          (click)="onCardClick($event)"
          (dblclick)="toggleExpand()"
          [attr.tabindex]="0"
@@ -129,12 +131,27 @@ import { Transaction, Category } from '../../core/models/transaction.model';
         </div>
       </div>
 
+      <!-- Context-Only Indicator (Amazon Orders) -->
+      <div class="context-indicator" *ngIf="transaction.isContextOnly">
+        <mat-icon class="small-icon">shopping_cart</mat-icon>
+        <span>Order context (not a bank transaction)</span>
+      </div>
+
       <!-- Match Indicator -->
       <div class="match-indicator" *ngIf="transaction.matchInfo">
         <mat-icon class="small-icon">link</mat-icon>
         <span>{{ transaction.matchInfo.linkedTransactionIds.length }} linked</span>
         <mat-chip class="confidence-chip" [class]="transaction.matchInfo.confidence">
           {{ transaction.matchInfo.confidence }}
+        </mat-chip>
+      </div>
+
+      <!-- Linked Orders Indicator -->
+      <div class="linked-orders-indicator" *ngIf="transaction.linkedOrderIds?.length">
+        <mat-icon class="small-icon">shopping_cart</mat-icon>
+        <span>{{ transaction.linkedOrderIds?.length }} order(s) linked</span>
+        <mat-chip class="orders-chip">
+          details available
         </mat-chip>
       </div>
 
@@ -220,6 +237,16 @@ import { Transaction, Category } from '../../core/models/transaction.model';
 
     .transaction-card.matched {
       background: linear-gradient(to right, #fff9c4 0%, white 20%);
+    }
+
+    .transaction-card.context-only {
+      background: linear-gradient(to right, #fff3e0 0%, white 30%);
+      border-left-color: #ff9800;
+      opacity: 0.9;
+    }
+
+    .transaction-card.has-linked-orders {
+      background: linear-gradient(to right, #e8f5e9 0%, white 20%);
     }
 
     .transaction-card.editing {
@@ -345,6 +372,18 @@ import { Transaction, Category } from '../../core/models/transaction.model';
       opacity: 1;
     }
 
+    .context-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px dashed #ff9800;
+      font-size: 12px;
+      color: #e65100;
+      font-style: italic;
+    }
+
     .match-indicator {
       display: flex;
       align-items: center;
@@ -354,6 +393,25 @@ import { Transaction, Category } from '../../core/models/transaction.model';
       border-top: 1px dashed #e0e0e0;
       font-size: 12px;
       color: #666;
+    }
+
+    .linked-orders-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px dashed #4caf50;
+      font-size: 12px;
+      color: #2e7d32;
+    }
+
+    .orders-chip {
+      font-size: 10px;
+      min-height: 20px;
+      padding: 0 6px;
+      background: #c8e6c9 !important;
+      color: #2e7d32 !important;
     }
 
     .confidence-chip {

@@ -1062,13 +1062,22 @@ export class TransactionsComponent implements OnInit, OnDestroy {
       );
     }
 
+    // Get linked orders (Amazon orders) if this transaction has any
+    let linkedOrders: Transaction[] = [];
+    if (transaction.linkedOrderIds?.length) {
+      linkedOrders = this.transactions.filter(t =>
+        transaction.linkedOrderIds!.includes(t.id)
+      );
+    }
+
     const dialogRef = this.dialog.open(TransactionDetailDialogComponent, {
       width: '600px',
       maxHeight: '90vh',
       data: {
         transaction: transaction,
         categories: this.categories,
-        linkedTransactions: linkedTransactions
+        linkedTransactions: linkedTransactions,
+        linkedOrders: linkedOrders
       }
     });
 
