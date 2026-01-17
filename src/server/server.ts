@@ -22,7 +22,7 @@ const app = express();
 const rulesEngine = new RulesEngine();
 let aiAssistant: AIAssistant | null = null;
 let automationService: AutomationService;
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 app.use(cors());
 
 // Store pending MFA references
@@ -57,6 +57,10 @@ interface ConnectorConfig {
   lastSyncAt?: string;
   lastSyncStatus?: 'success' | 'partial' | 'failed';
   lastSyncError?: string;
+  // Credential storage for auto-reconnect
+  credentialsEncrypted?: string;
+  credentialsSavedAt?: string;
+  autoConnect?: boolean;
 }
 
 interface ConnectorState {
@@ -480,8 +484,8 @@ app.post('/connectors/:id/connect', async (req: Request, res: Response) => {
     if ((!userId || !pin) && connectorConfig.credentialsEncrypted) {
       try {
         const savedCreds = decryptCredentials(connectorConfig.credentialsEncrypted);
-        userId = savedCreds.userId;
-        pin = savedCreds.pin;
+        userId = savedCreds['userId'];
+        pin = savedCreds['pin'];
         console.log(`[Connector] Using saved credentials for ${connectorConfig.name}`);
       } catch (error) {
         console.error('[Connector] Failed to decrypt saved credentials:', error);
@@ -504,7 +508,7 @@ app.post('/connectors/:id/connect', async (req: Request, res: Response) => {
       connectorConfig.credentialsEncrypted = encrypted;
       connectorConfig.credentialsSavedAt = new Date().toISOString();
       connectorConfig.autoConnect = true;
-      db.updateConnector(connectorConfig);
+      db.updateConnector(connectorConfig as any);
       console.log(`[Connector] Credentials saved for ${connectorConfig.name}`);
     }
 
@@ -892,11 +896,15 @@ app.post('/connectors/:id/fetch', async (req: Request, res: Response) => {
         })
       );
 
+      let extIdDupes = 0;
+      let sigDupes = 0;
+
       for (const tx of fetchResult.transactions) {
         // Primary check: externalId (most reliable)
         const externalIdKey = `${connectorConfig.type}-${tx.externalId}`;
         if (existingExternalIds.has(externalIdKey)) {
           duplicateCount++;
+          extIdDupes++;
           continue;
         }
 
@@ -908,6 +916,7 @@ app.post('/connectors/:id/fetch', async (req: Request, res: Response) => {
 
         if (existingSignatures.has(signature)) {
           duplicateCount++;
+          sigDupes++;
           continue;
         }
 
@@ -933,6 +942,13 @@ app.post('/connectors/:id/fetch', async (req: Request, res: Response) => {
         existingExternalIds.add(externalIdKey);
         existingSignatures.add(signature);
       }
+
+      // Check for duplicates within the fetched batch itself
+      const fetchedExtIds = fetchResult.transactions.map(tx => `${connectorConfig.type}-${tx.externalId}`);
+      const uniqueFetchedExtIds = new Set(fetchedExtIds);
+      console.log(`[Duplicate Detection] Fetched: ${fetchResult.transactions.length}, unique externalIds in batch: ${uniqueFetchedExtIds.size}`);
+      console.log(`[Duplicate Detection] Total dupes: ${duplicateCount}, by externalId: ${extIdDupes}, by signature: ${sigDupes}`);
+      console.log(`[Duplicate Detection] Existing externalIds in DB: ${existingExternalIds.size - newCount}`);
 
       // Update connector's last sync info
       connectorConfig.lastSyncAt = new Date().toISOString();
@@ -2409,8 +2425,8 @@ async function autoReconnectConnectors(): Promise<void> {
         connectorConfig.id,
         connectorConfig.type as CMConnectorType,
         {
-          userId: credentials.userId,
-          pin: credentials.pin,
+          userId: credentials['userId'],
+          pin: credentials['pin'],
           bankCode: connectorConfig.bankCode
         }
       );
@@ -2420,7 +2436,7 @@ async function autoReconnectConnectors(): Promise<void> {
 
       if (result.success) {
         const state: ConnectorState = {
-          config: connectorConfig,
+          config: connectorConfig as ConnectorConfig,
           status: ConnectorStatus.CONNECTED,
           statusMessage: `Auto-connected. Found ${result.accounts?.length || 0} accounts.`
         };
@@ -2429,7 +2445,7 @@ async function autoReconnectConnectors(): Promise<void> {
       } else if (result.requiresMFA) {
         // MFA required - set state but can't auto-complete
         const state: ConnectorState = {
-          config: connectorConfig,
+          config: connectorConfig as ConnectorConfig,
           status: ConnectorStatus.MFA_REQUIRED,
           statusMessage: 'Auto-connect requires MFA - please confirm manually',
           mfaChallenge: result.mfaChallenge ? {

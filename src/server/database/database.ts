@@ -8,6 +8,9 @@
 import Database from 'better-sqlite3';
 import { join } from 'path';
 import { existsSync, readFileSync } from 'fs';
+import type { MatchPatternType, MatchSource, MatchConfidence } from '../matching/matcher';
+import type { ConnectorType } from '../connectors/connector-manager';
+import type { RuleCondition, RuleAction } from '../ai/rules-engine';
 
 // Database file location (outside of assets, in a data folder)
 const DB_PATH = join(__dirname, '../../data/finance.db');
@@ -22,6 +25,35 @@ if (!existsSync(DATA_DIR)) {
 // Initialize database connection
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL'); // Better performance for concurrent reads
+
+// ==================== MIGRATIONS ====================
+
+function runMigrations(): void {
+  // Check if credentials columns exist in connectors table
+  const connectorColumns = db.prepare(`PRAGMA table_info(connectors)`).all() as any[];
+  const columnNames = connectorColumns.map(c => c.name);
+
+  if (!columnNames.includes('credentials_encrypted')) {
+    console.log('[Database] Running migration: Adding credentials columns to connectors table...');
+    db.exec(`
+      ALTER TABLE connectors ADD COLUMN credentials_encrypted TEXT;
+      ALTER TABLE connectors ADD COLUMN credentials_saved_at TEXT;
+      ALTER TABLE connectors ADD COLUMN auto_connect INTEGER DEFAULT 0;
+    `);
+    console.log('[Database] Migration complete: credentials columns added');
+  }
+}
+
+// Run migrations before schema (in case table exists but missing columns)
+try {
+  // Only run if connectors table exists
+  const tables = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='connectors'`).all();
+  if (tables.length > 0) {
+    runMigrations();
+  }
+} catch (error) {
+  console.error('[Database] Migration error:', error);
+}
 
 // ==================== SCHEMA ====================
 
@@ -148,9 +180,9 @@ export interface StoredTransaction {
   matchInfo?: {
     matchId: string;
     isPrimary: boolean;
-    patternType: string;
-    source: string;
-    confidence: string;
+    patternType: MatchPatternType;
+    source: MatchSource;
+    confidence: MatchConfidence;
     linkedTransactionIds: string[];
   };
   transactionType?: 'expense' | 'income' | 'transfer' | 'internal';
@@ -373,7 +405,7 @@ export function saveCategories(categories: Category[]): void {
 
 export interface ConnectorConfig {
   id: string;
-  type: string;
+  type: ConnectorType;
   name: string;
   enabled: boolean;
   bankCode?: string;
@@ -479,12 +511,12 @@ export interface TransactionMatch {
   id: string;
   createdAt: string;
   updatedAt: string;
-  patternType: string;
-  source: string;
-  confidence: string;
+  patternType: MatchPatternType;
+  source: MatchSource;
+  confidence: MatchConfidence;
   primaryTransactionId: string;
   linkedTransactionIds: string[];
-  matchedAmount?: number;
+  matchedAmount: number;
   notes?: string;
 }
 
@@ -499,7 +531,7 @@ export function getAllMatches(): TransactionMatch[] {
     confidence: row.confidence,
     primaryTransactionId: row.primary_transaction_id,
     linkedTransactionIds: JSON.parse(row.linked_transaction_ids),
-    matchedAmount: row.matched_amount || undefined,
+    matchedAmount: row.matched_amount || 0,
     notes: row.notes || undefined
   }));
 }
@@ -542,75 +574,88 @@ export function saveMatches(matches: TransactionMatch[]): void {
 
 export interface Rule {
   id: string;
-  name: string;
-  conditions: any;
-  actions: any;
-  priority: number;
-  enabled: boolean;
   createdAt: string;
   updatedAt: string;
+  conditions: RuleCondition[];
+  conditionOperator: 'AND' | 'OR';
+  action: RuleAction;
   source: 'auto' | 'manual' | 'correction';
   confidence: number;
-  timesApplied: number;
-  lastAppliedAt?: string;
+  usageCount: number;
+  lastUsedAt?: string;
+  enabled: boolean;
+  correctionHistory?: {
+    originalCategory?: string;
+    correctedCategory: string;
+    transactionId: string;
+    timestamp: string;
+  }[];
 }
 
 export function getAllRules(): Rule[] {
   const rows = db.prepare(`SELECT * FROM rules ORDER BY priority DESC, confidence DESC`).all() as any[];
-  return rows.map(row => ({
-    id: row.id,
-    name: row.name,
-    conditions: JSON.parse(row.conditions),
-    actions: JSON.parse(row.actions),
-    priority: row.priority,
-    enabled: row.enabled === 1,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    source: row.source,
-    confidence: row.confidence,
-    timesApplied: row.times_applied,
-    lastAppliedAt: row.last_applied_at || undefined
-  }));
+  return rows.map(row => {
+    const conditionsData = JSON.parse(row.conditions);
+    const actionsData = JSON.parse(row.actions);
+    return {
+      id: row.id,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      conditions: conditionsData.conditions || conditionsData,
+      conditionOperator: conditionsData.operator || 'AND',
+      action: actionsData.action || actionsData,
+      source: row.source,
+      confidence: row.confidence,
+      usageCount: row.times_applied,
+      lastUsedAt: row.last_applied_at || undefined,
+      enabled: row.enabled === 1,
+      correctionHistory: actionsData.correctionHistory
+    };
+  });
 }
 
 export function insertRule(rule: Rule): void {
+  const conditionsData = { conditions: rule.conditions, operator: rule.conditionOperator };
+  const actionsData = { action: rule.action, correctionHistory: rule.correctionHistory };
   db.prepare(`
     INSERT INTO rules (id, name, conditions, actions, priority, enabled,
                       created_at, updated_at, source, confidence, times_applied, last_applied_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     rule.id,
-    rule.name,
-    JSON.stringify(rule.conditions),
-    JSON.stringify(rule.actions),
-    rule.priority,
+    '',  // name not in new interface, store empty
+    JSON.stringify(conditionsData),
+    JSON.stringify(actionsData),
+    0,   // priority not in new interface, default to 0
     rule.enabled ? 1 : 0,
     rule.createdAt,
     rule.updatedAt,
     rule.source,
     rule.confidence,
-    rule.timesApplied,
-    rule.lastAppliedAt || null
+    rule.usageCount,
+    rule.lastUsedAt || null
   );
 }
 
 export function updateRule(rule: Rule): void {
+  const conditionsData = { conditions: rule.conditions, operator: rule.conditionOperator };
+  const actionsData = { action: rule.action, correctionHistory: rule.correctionHistory };
   db.prepare(`
     UPDATE rules SET
       name = ?, conditions = ?, actions = ?, priority = ?, enabled = ?,
       updated_at = ?, source = ?, confidence = ?, times_applied = ?, last_applied_at = ?
     WHERE id = ?
   `).run(
-    rule.name,
-    JSON.stringify(rule.conditions),
-    JSON.stringify(rule.actions),
-    rule.priority,
+    '',  // name not in new interface
+    JSON.stringify(conditionsData),
+    JSON.stringify(actionsData),
+    0,   // priority not in new interface
     rule.enabled ? 1 : 0,
     rule.updatedAt,
     rule.source,
     rule.confidence,
-    rule.timesApplied,
-    rule.lastAppliedAt || null,
+    rule.usageCount,
+    rule.lastUsedAt || null,
     rule.id
   );
 }

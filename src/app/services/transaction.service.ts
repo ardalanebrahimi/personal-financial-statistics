@@ -92,18 +92,16 @@ export class TransactionService {
             continue;
         }
 
-        // Only call AI service if no match found
-        const category = await this.aiService.suggestCategory(description);
-        
+        // Save transaction without category - categorization is done separately on demand
         await firstValueFrom(
             this.http.post(this.API_URL, {
                 id: crypto.randomUUID(),
                 date,
                 description,
                 amount,
-                beneficiary, // Include Beneficiary/payer in the transaction object
-                category: category
-            }, { responseType: 'text' }) // Explicitly set responseType to 'text'
+                beneficiary,
+                category: ''
+            }, { responseType: 'text' })
         );
     }
     

@@ -17,6 +17,7 @@ export interface CredentialsDialogData {
 export interface CredentialsResult {
   userId: string;
   pin: string;
+  saveCredentials: boolean;
 }
 
 @Component({
@@ -40,7 +41,8 @@ export interface CredentialsResult {
     <mat-dialog-content>
       <p class="info-text">
         Enter your online banking credentials to connect.
-        Your credentials are only used for this session and are not stored.
+        <span *ngIf="!saveCredentials">Your credentials are only used for this session and are not stored.</span>
+        <span *ngIf="saveCredentials">Your credentials will be encrypted and stored for automatic reconnection.</span>
       </p>
 
       <mat-form-field appearance="outline" class="full-width">
@@ -69,6 +71,10 @@ export interface CredentialsResult {
         <mat-icon>account_balance</mat-icon>
         <span>Bank Code (BLZ): {{ data.connector.config.bankCode }}</span>
       </div>
+
+      <mat-checkbox [(ngModel)]="saveCredentials" class="save-credentials">
+        Remember credentials for automatic reconnection
+      </mat-checkbox>
 
       <p class="security-note">
         <mat-icon>security</mat-icon>
@@ -139,12 +145,18 @@ export interface CredentialsResult {
       width: 16px;
       height: 16px;
     }
+
+    .save-credentials {
+      display: block;
+      margin: 1rem 0;
+    }
   `]
 })
 export class CredentialsDialogComponent {
   userId = '';
   pin = '';
   showPin = false;
+  saveCredentials = true;
 
   constructor(
     public dialogRef: MatDialogRef<CredentialsDialogComponent>,
@@ -163,7 +175,8 @@ export class CredentialsDialogComponent {
     if (this.isValid()) {
       this.dialogRef.close({
         userId: this.userId.trim(),
-        pin: this.pin
+        pin: this.pin,
+        saveCredentials: this.saveCredentials
       } as CredentialsResult);
     }
   }

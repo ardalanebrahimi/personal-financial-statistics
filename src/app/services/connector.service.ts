@@ -96,7 +96,7 @@ export class ConnectorService {
    */
   async connect(
     connectorId: string,
-    credentials?: { userId: string; pin: string }
+    credentials?: { userId: string; pin: string; saveCredentials?: boolean }
   ): Promise<ConnectorState> {
     try {
       const response = await firstValueFrom(
@@ -222,6 +222,35 @@ export class ConnectorService {
         c.status === ConnectorStatus.CONNECTING ||
         c.status === ConnectorStatus.FETCHING
     );
+  }
+
+  /**
+   * Check if connector has saved credentials
+   */
+  async hasCredentials(connectorId: string): Promise<boolean> {
+    try {
+      const response = await firstValueFrom(
+        this.http.get<{ hasCredentials: boolean }>(`${this.API_URL}/${connectorId}/has-credentials`)
+      );
+      return response.hasCredentials;
+    } catch (error) {
+      console.error('Failed to check credentials:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Clear saved credentials for a connector
+   */
+  async clearCredentials(connectorId: string): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.http.delete(`${this.API_URL}/${connectorId}/credentials`)
+      );
+    } catch (error) {
+      console.error('Failed to clear credentials:', error);
+      throw error;
+    }
   }
 
   /**

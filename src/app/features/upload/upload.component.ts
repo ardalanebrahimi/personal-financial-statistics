@@ -9,8 +9,12 @@ import { MatNativeDateModule } from '@angular/material/core';
 import { MatInputModule } from '@angular/material/input';
 import { FormsModule } from '@angular/forms';
 import { MatSortModule } from '@angular/material/sort';
+import { MatCheckboxModule } from '@angular/material/checkbox';
+import { MatProgressBarModule } from '@angular/material/progress-bar';
+import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { TransactionService } from '../../services/transaction.service';
 import { CategoryService } from '../../services/category.service';
+import { AIService } from '../../services/ai.service';
 import { Transaction, Category } from '../../core/models/transaction.model';
 
 @Component({
@@ -31,6 +35,46 @@ import { Transaction, Category } from '../../core/models/transaction.model';
         <div class="preview-container">
           <div class="actions">
             <button mat-button (click)="exportTransactions()">Export</button>
+          </div>
+
+          <!-- Categorization Toolbar -->
+          <div class="categorization-toolbar" *ngIf="previewData?.length">
+            <div class="selection-info">
+              <mat-checkbox
+                [checked]="isAllSelected()"
+                [indeterminate]="isIndeterminate()"
+                (change)="toggleSelectAll()">
+                Select All
+              </mat-checkbox>
+              <span class="selection-count" *ngIf="selectedTransactions.size > 0">
+                ({{ selectedTransactions.size }} selected)
+              </span>
+            </div>
+            <div class="categorization-actions">
+              <button mat-raised-button color="primary"
+                      (click)="categorizeAllUncategorized()"
+                      [disabled]="isCategorizingInProgress || getUncategorizedCount() === 0">
+                Categorize Uncategorized ({{ getUncategorizedCount() }})
+              </button>
+              <button mat-raised-button color="accent"
+                      (click)="categorizeSelected()"
+                      [disabled]="isCategorizingInProgress || selectedTransactions.size === 0">
+                Categorize Selected
+              </button>
+              <button mat-stroked-button
+                      (click)="categorizeOneByOne()"
+                      [disabled]="isCategorizingInProgress || getUncategorizedCount() === 0">
+                One by One
+              </button>
+            </div>
+          </div>
+
+          <!-- Progress Bar -->
+          <div class="progress-container" *ngIf="isCategorizingInProgress">
+            <mat-progress-bar mode="determinate" [value]="getProgressPercent()"></mat-progress-bar>
+            <span class="progress-text">
+              Categorizing: {{ categorizationProgress.current }} / {{ categorizationProgress.total }}
+            </span>
           </div>
 
           <div class="filters-summary">
@@ -78,6 +122,13 @@ import { Transaction, Category } from '../../core/models/transaction.model';
           <table *ngIf="previewData?.length">
             <thead>
               <tr>
+                <th class="checkbox-col">
+                  <mat-checkbox
+                    [checked]="isAllSelected()"
+                    [indeterminate]="isIndeterminate()"
+                    (change)="toggleSelectAll()">
+                  </mat-checkbox>
+                </th>
                 <th (click)="sortBy('date')" class="sortable">
                   Date
                   <span class="sort-indicator">
@@ -92,21 +143,29 @@ import { Transaction, Category } from '../../core/models/transaction.model';
                   </span>
                 </th>
                 <th>Beneficiary</th>
-                <th>Current Category</th>
-                <th>New Category</th>
+                <th>Category</th>
               </tr>
             </thead>
             <tbody>
-              <tr *ngFor="let item of sortedTransactions">
+              <tr *ngFor="let item of sortedTransactions"
+                  [class.selected]="isSelected(item.id)"
+                  [class.uncategorized]="!item.category">
+                <td class="checkbox-col">
+                  <mat-checkbox
+                    [checked]="isSelected(item.id)"
+                    (change)="toggleSelection(item.id)">
+                  </mat-checkbox>
+                </td>
                 <td>{{item.date | date}}</td>
                 <td>{{item.description}}</td>
                 <td>{{item.amount | currency}}</td>
                 <td>{{item.beneficiary}}</td>
-                <td>{{item.category}}</td>
                 <td>
-                  <mat-select [(ngModel)]="item.category" 
+                  <mat-select [(ngModel)]="item.category"
                              (selectionChange)="updateTransaction(item)"
-                             [style.color]="getCategoryColor(item.category)">
+                             [style.color]="getCategoryColor(item.category)"
+                             [placeholder]="'Select category'">
+                    <mat-option value="">-- None --</mat-option>
                     <mat-option *ngFor="let cat of categories" [value]="cat.name">
                       {{cat.name}}
                     </mat-option>
@@ -189,6 +248,54 @@ import { Transaction, Category } from '../../core/models/transaction.model';
       margin-left: 4px;
       color: #666;
     }
+    .categorization-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem;
+      background: #e3f2fd;
+      border-radius: 4px;
+      margin-bottom: 1rem;
+    }
+    .selection-info {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .selection-count {
+      color: #1976d2;
+      font-weight: 500;
+    }
+    .categorization-actions {
+      display: flex;
+      gap: 0.5rem;
+    }
+    .progress-container {
+      margin-bottom: 1rem;
+      padding: 0.5rem;
+      background: #fff3e0;
+      border-radius: 4px;
+    }
+    .progress-text {
+      display: block;
+      text-align: center;
+      margin-top: 0.5rem;
+      color: #e65100;
+      font-weight: 500;
+    }
+    .checkbox-col {
+      width: 50px;
+      text-align: center;
+    }
+    tr.selected {
+      background-color: #e3f2fd;
+    }
+    tr.uncategorized {
+      background-color: #fff8e1;
+    }
+    tr.selected.uncategorized {
+      background-color: #c8e6c9;
+    }
   `],
   imports: [
     CommonModule,
@@ -200,7 +307,10 @@ import { Transaction, Category } from '../../core/models/transaction.model';
     MatNativeDateModule,
     MatInputModule,
     FormsModule,
-    MatSortModule
+    MatSortModule,
+    MatCheckboxModule,
+    MatProgressBarModule,
+    MatSnackBarModule
   ],
   standalone: true
 })
@@ -221,9 +331,18 @@ export class UploadComponent implements OnInit {
   sortField: 'date' | 'amount' | null = null;
   sortOrder: 'asc' | 'desc' = 'desc';
 
+  // Selection state
+  selectedTransactions = new Set<string>();
+
+  // Categorization progress state
+  isCategorizingInProgress = false;
+  categorizationProgress = { current: 0, total: 0 };
+
   constructor(
     private transactionService: TransactionService,
-    private categoryService: CategoryService
+    private categoryService: CategoryService,
+    private aiService: AIService,
+    private snackBar: MatSnackBar
   ) {
     this.categories = this.categoryService.getCategories();
   }
@@ -334,5 +453,100 @@ export class UploadComponent implements OnInit {
     this.sortField = null;
     this.sortOrder = 'desc';
     this.loadTransactions();
+  }
+
+  // Selection methods
+  toggleSelection(id: string) {
+    if (this.selectedTransactions.has(id)) {
+      this.selectedTransactions.delete(id);
+    } else {
+      this.selectedTransactions.add(id);
+    }
+  }
+
+  toggleSelectAll() {
+    if (this.isAllSelected()) {
+      this.selectedTransactions.clear();
+    } else {
+      this.sortedTransactions.forEach(t => this.selectedTransactions.add(t.id));
+    }
+  }
+
+  isSelected(id: string): boolean {
+    return this.selectedTransactions.has(id);
+  }
+
+  isAllSelected(): boolean {
+    return this.sortedTransactions.length > 0 &&
+           this.sortedTransactions.every(t => this.selectedTransactions.has(t.id));
+  }
+
+  isIndeterminate(): boolean {
+    return this.selectedTransactions.size > 0 && !this.isAllSelected();
+  }
+
+  // Categorization helper methods
+  getUncategorizedCount(): number {
+    return this.previewData?.filter(t => !t.category || t.category === '').length || 0;
+  }
+
+  getProgressPercent(): number {
+    if (this.categorizationProgress.total === 0) return 0;
+    return (this.categorizationProgress.current / this.categorizationProgress.total) * 100;
+  }
+
+  // Categorization methods
+  async categorizeAllUncategorized() {
+    const uncategorized = this.previewData?.filter(t => !t.category || t.category === '') || [];
+    if (uncategorized.length === 0) return;
+    await this.categorizeTransactions(uncategorized);
+  }
+
+  async categorizeSelected() {
+    const selected = this.previewData?.filter(t => this.selectedTransactions.has(t.id)) || [];
+    if (selected.length === 0) return;
+    await this.categorizeTransactions(selected);
+  }
+
+  async categorizeOneByOne() {
+    const uncategorized = this.previewData?.filter(t => !t.category || t.category === '') || [];
+    if (uncategorized.length === 0) return;
+    await this.categorizeTransactions(uncategorized, true);
+  }
+
+  private async categorizeTransactions(transactions: Transaction[], showProgress = true) {
+    this.isCategorizingInProgress = true;
+    this.categorizationProgress = { current: 0, total: transactions.length };
+
+    try {
+      for (const transaction of transactions) {
+        try {
+          const category = await this.aiService.suggestCategory(transaction.description);
+          transaction.category = category;
+          await this.transactionService.updateTransaction(transaction);
+
+          this.categorizationProgress.current++;
+
+          if (showProgress) {
+            // Small delay to make progress visible for one-by-one mode
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+        } catch (error) {
+          console.error(`Failed to categorize transaction ${transaction.id}:`, error);
+        }
+      }
+
+      this.snackBar.open(
+        `Categorized ${this.categorizationProgress.current} transaction(s)`,
+        'Close',
+        { duration: 3000 }
+      );
+    } finally {
+      this.isCategorizingInProgress = false;
+      this.categorizationProgress = { current: 0, total: 0 };
+      this.selectedTransactions.clear();
+      // Refresh categories in case new ones were created
+      this.categories = this.categoryService.getCategories();
+    }
   }
 }
