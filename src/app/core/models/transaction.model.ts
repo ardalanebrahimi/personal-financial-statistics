@@ -48,6 +48,10 @@ export interface Transaction {
   // Flags
   excludeFromStats?: boolean;  // Exclude from spending calculations (e.g., internal transfers)
   isReconciled?: boolean;      // User has verified this transaction
+  isContextOnly?: boolean;     // True for items that provide context but aren't real bank transactions (e.g., Amazon orders)
+
+  // Order linking - for connecting bank transactions to detailed order information
+  linkedOrderIds?: string[];   // IDs of context-only transactions (orders) linked to this bank transaction
 }
 
 export interface Category {

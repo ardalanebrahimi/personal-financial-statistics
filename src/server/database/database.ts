@@ -31,9 +31,9 @@ db.pragma('journal_mode = WAL'); // Better performance for concurrent reads
 function runMigrations(): void {
   // Check if credentials columns exist in connectors table
   const connectorColumns = db.prepare(`PRAGMA table_info(connectors)`).all() as any[];
-  const columnNames = connectorColumns.map(c => c.name);
+  const connectorColumnNames = connectorColumns.map((c: any) => c.name);
 
-  if (!columnNames.includes('credentials_encrypted')) {
+  if (!connectorColumnNames.includes('credentials_encrypted')) {
     console.log('[Database] Running migration: Adding credentials columns to connectors table...');
     db.exec(`
       ALTER TABLE connectors ADD COLUMN credentials_encrypted TEXT;
@@ -42,13 +42,35 @@ function runMigrations(): void {
     `);
     console.log('[Database] Migration complete: credentials columns added');
   }
+
+  // Check if context/order linking columns exist in transactions table
+  const transactionColumns = db.prepare(`PRAGMA table_info(transactions)`).all() as any[];
+  const txColumnNames = transactionColumns.map((c: any) => c.name);
+
+  if (!txColumnNames.includes('is_context_only')) {
+    console.log('[Database] Running migration: Adding context/order linking columns to transactions table...');
+    db.exec(`
+      ALTER TABLE transactions ADD COLUMN is_context_only INTEGER DEFAULT 0;
+      ALTER TABLE transactions ADD COLUMN linked_order_ids TEXT DEFAULT '[]';
+    `);
+    console.log('[Database] Migration complete: context/order linking columns added');
+
+    // Mark existing Amazon transactions as context-only
+    const amazonUpdated = db.prepare(`
+      UPDATE transactions SET is_context_only = 1
+      WHERE source_connector_type = 'amazon'
+    `).run();
+    console.log(`[Database] Marked ${amazonUpdated.changes} Amazon transactions as context-only`);
+  }
 }
 
 // Run migrations before schema (in case table exists but missing columns)
 try {
-  // Only run if connectors table exists
-  const tables = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='connectors'`).all();
-  if (tables.length > 0) {
+  // Check if tables exist and run migrations
+  const tables = db.prepare(`SELECT name FROM sqlite_master WHERE type='table'`).all() as any[];
+  const tableNames = tables.map(t => t.name);
+
+  if (tableNames.includes('connectors') || tableNames.includes('transactions')) {
     runMigrations();
   }
 } catch (error) {
@@ -83,7 +105,11 @@ CREATE TABLE IF NOT EXISTS transactions (
 
   -- Transaction classification
   transaction_type TEXT CHECK(transaction_type IN ('expense', 'income', 'transfer', 'internal')),
-  exclude_from_stats INTEGER DEFAULT 0
+  exclude_from_stats INTEGER DEFAULT 0,
+
+  -- Context/Order linking
+  is_context_only INTEGER DEFAULT 0,  -- True for items that provide context but aren't real bank transactions (e.g., Amazon orders)
+  linked_order_ids TEXT DEFAULT '[]'  -- JSON array of IDs of context-only transactions linked to this bank transaction
 );
 
 -- Categories table
@@ -154,6 +180,7 @@ CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
 CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category);
 CREATE INDEX IF NOT EXISTS idx_transactions_source ON transactions(source_connector_type);
 CREATE INDEX IF NOT EXISTS idx_transactions_match ON transactions(match_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_context ON transactions(is_context_only);
 CREATE INDEX IF NOT EXISTS idx_matches_primary ON matches(primary_transaction_id);
 CREATE INDEX IF NOT EXISTS idx_rules_enabled ON rules(enabled, priority);
 `;
@@ -187,6 +214,9 @@ export interface StoredTransaction {
   };
   transactionType?: 'expense' | 'income' | 'transfer' | 'internal';
   excludeFromStats?: boolean;
+  // Context/Order linking fields
+  isContextOnly?: boolean;     // True for items that provide context but aren't real bank transactions
+  linkedOrderIds?: string[];   // IDs of context-only transactions (orders) linked to this bank transaction
 }
 
 export function getAllTransactions(): StoredTransaction[] {
@@ -218,11 +248,13 @@ export function insertTransaction(tx: Omit<StoredTransaction, 'timestamp'>): voi
       id, date, description, amount, category, beneficiary, timestamp,
       source_connector_type, source_external_id, source_imported_at,
       match_id, match_is_primary, match_pattern_type, match_source,
-      match_confidence, match_linked_ids, transaction_type, exclude_from_stats
+      match_confidence, match_linked_ids, transaction_type, exclude_from_stats,
+      is_context_only, linked_order_ids
     ) VALUES (
       ?, ?, ?, ?, ?, ?, ?,
       ?, ?, ?,
-      ?, ?, ?, ?, ?, ?, ?, ?
+      ?, ?, ?, ?, ?, ?, ?, ?,
+      ?, ?
     )
   `);
 
@@ -244,7 +276,9 @@ export function insertTransaction(tx: Omit<StoredTransaction, 'timestamp'>): voi
     tx.matchInfo?.confidence || null,
     tx.matchInfo?.linkedTransactionIds ? JSON.stringify(tx.matchInfo.linkedTransactionIds) : null,
     tx.transactionType || null,
-    tx.excludeFromStats ? 1 : 0
+    tx.excludeFromStats ? 1 : 0,
+    tx.isContextOnly ? 1 : 0,
+    tx.linkedOrderIds ? JSON.stringify(tx.linkedOrderIds) : '[]'
   );
 }
 
@@ -255,6 +289,7 @@ export function updateTransaction(tx: StoredTransaction): void {
       source_connector_type = ?, source_external_id = ?, source_imported_at = ?,
       match_id = ?, match_is_primary = ?, match_pattern_type = ?, match_source = ?,
       match_confidence = ?, match_linked_ids = ?, transaction_type = ?, exclude_from_stats = ?,
+      is_context_only = ?, linked_order_ids = ?,
       timestamp = ?
     WHERE id = ?
   `);
@@ -276,6 +311,8 @@ export function updateTransaction(tx: StoredTransaction): void {
     tx.matchInfo?.linkedTransactionIds ? JSON.stringify(tx.matchInfo.linkedTransactionIds) : null,
     tx.transactionType || null,
     tx.excludeFromStats ? 1 : 0,
+    tx.isContextOnly ? 1 : 0,
+    tx.linkedOrderIds ? JSON.stringify(tx.linkedOrderIds) : '[]',
     new Date().toISOString(),
     tx.id
   );
@@ -351,6 +388,19 @@ function rowToTransaction(row: any): StoredTransaction {
 
   if (row.exclude_from_stats) {
     tx.excludeFromStats = row.exclude_from_stats === 1;
+  }
+
+  // Context/Order linking fields
+  if (row.is_context_only) {
+    tx.isContextOnly = row.is_context_only === 1;
+  }
+
+  if (row.linked_order_ids) {
+    try {
+      tx.linkedOrderIds = JSON.parse(row.linked_order_ids);
+    } catch {
+      tx.linkedOrderIds = [];
+    }
   }
 
   return tx;

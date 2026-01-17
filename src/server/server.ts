@@ -1256,7 +1256,8 @@ app.post('/import/amazon', async (req: Request, res: Response) => {
             connectorType: 'amazon',
             externalId: tx.externalId,
             importedAt: new Date().toISOString()
-          }
+          },
+          isContextOnly: true // Amazon orders are context data, not real bank transactions
         });
         newCount++;
       } else {
