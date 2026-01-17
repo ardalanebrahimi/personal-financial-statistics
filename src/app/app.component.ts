@@ -12,35 +12,32 @@ import { AiFabComponent } from './shared/ai-fab/ai-fab.component';
   selector: 'app-root',
   template: `
     <mat-sidenav-container>
-      <mat-sidenav #sidenav mode="side" [opened]="sidenavOpen" [class.collapsed]="!sidenavOpen">
+      <mat-sidenav #sidenav mode="side" opened [class.collapsed]="!sidenavExpanded">
         <div class="nav-content">
           <div class="nav-header">
-            <h2 *ngIf="sidenavOpen">Financial Analytics</h2>
-            <button mat-icon-button (click)="toggleSidenav()" [matTooltip]="sidenavOpen ? 'Collapse' : 'Expand'">
-              <mat-icon>{{ sidenavOpen ? 'chevron_left' : 'chevron_right' }}</mat-icon>
+            <h2 *ngIf="sidenavExpanded">Financial Analytics</h2>
+            <button mat-icon-button (click)="toggleSidenav()" [matTooltip]="sidenavExpanded ? 'Collapse' : 'Expand'" matTooltipPosition="right">
+              <mat-icon>{{ sidenavExpanded ? 'chevron_left' : 'menu' }}</mat-icon>
             </button>
           </div>
           <nav>
-            <a mat-button routerLink="/dashboard" routerLinkActive="active" [matTooltip]="sidenavOpen ? '' : 'Dashboard'" matTooltipPosition="right">
+            <a mat-button routerLink="/dashboard" routerLinkActive="active" [matTooltip]="sidenavExpanded ? '' : 'Dashboard'" matTooltipPosition="right">
               <mat-icon>dashboard</mat-icon>
-              <span *ngIf="sidenavOpen">Dashboard</span>
+              <span *ngIf="sidenavExpanded">Dashboard</span>
             </a>
-            <a mat-button routerLink="/transactions" routerLinkActive="active" [matTooltip]="sidenavOpen ? '' : 'Transactions'" matTooltipPosition="right">
+            <a mat-button routerLink="/transactions" routerLinkActive="active" [matTooltip]="sidenavExpanded ? '' : 'Transactions'" matTooltipPosition="right">
               <mat-icon>receipt_long</mat-icon>
-              <span *ngIf="sidenavOpen">Transactions</span>
+              <span *ngIf="sidenavExpanded">Transactions</span>
             </a>
-            <a mat-button routerLink="/settings" routerLinkActive="active" [matTooltip]="sidenavOpen ? '' : 'Settings'" matTooltipPosition="right">
+            <a mat-button routerLink="/settings" routerLinkActive="active" [matTooltip]="sidenavExpanded ? '' : 'Settings'" matTooltipPosition="right">
               <mat-icon>settings</mat-icon>
-              <span *ngIf="sidenavOpen">Settings</span>
+              <span *ngIf="sidenavExpanded">Settings</span>
             </a>
           </nav>
         </div>
       </mat-sidenav>
-      <mat-sidenav-content [style.margin-left]="sidenavOpen ? '250px' : '64px'">
+      <mat-sidenav-content [style.margin-left]="sidenavExpanded ? '250px' : '64px'">
         <mat-toolbar color="primary">
-          <button mat-icon-button (click)="toggleSidenav()" class="menu-button">
-            <mat-icon>menu</mat-icon>
-          </button>
           <span>Personal Financial Statistics</span>
         </mat-toolbar>
         <main>
@@ -63,6 +60,7 @@ import { AiFabComponent } from './shared/ai-fab/ai-fab.component';
     mat-sidenav {
       width: 250px;
       transition: width 0.3s ease;
+      overflow-x: hidden;
     }
     mat-sidenav.collapsed {
       width: 64px;
@@ -71,13 +69,18 @@ import { AiFabComponent } from './shared/ai-fab/ai-fab.component';
       transition: margin-left 0.3s ease;
     }
     .nav-content {
-      padding: 1rem;
+      padding: 0.75rem;
+      width: 250px;
     }
     .nav-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
       margin-bottom: 1rem;
+      min-height: 40px;
+    }
+    .collapsed .nav-header {
+      justify-content: center;
     }
     .nav-header h2 {
       margin: 0;
@@ -88,7 +91,7 @@ import { AiFabComponent } from './shared/ai-fab/ai-fab.component';
     nav {
       display: flex;
       flex-direction: column;
-      gap: 0.5rem;
+      gap: 0.25rem;
     }
     nav a {
       display: flex;
@@ -96,9 +99,14 @@ import { AiFabComponent } from './shared/ai-fab/ai-fab.component';
       gap: 0.75rem;
       justify-content: flex-start;
       min-width: 40px;
+      padding: 8px 12px;
+    }
+    .collapsed nav a {
+      justify-content: center;
+      padding: 8px;
     }
     nav a.active {
-      background-color: rgba(0, 0, 0, 0.04);
+      background-color: rgba(0, 0, 0, 0.08);
       font-weight: 500;
     }
     nav a mat-icon {
@@ -112,9 +120,6 @@ import { AiFabComponent } from './shared/ai-fab/ai-fab.component';
       position: sticky;
       top: 0;
       z-index: 100;
-    }
-    .menu-button {
-      margin-right: 8px;
     }
     main {
       padding: 1rem;
@@ -134,10 +139,10 @@ import { AiFabComponent } from './shared/ai-fab/ai-fab.component';
 })
 export class AppComponent {
   @ViewChild('sidenav') sidenav!: MatSidenav;
-  sidenavOpen = true;
+  sidenavExpanded = true;
   title = 'personal-financial-statistics';
 
   toggleSidenav() {
-    this.sidenavOpen = !this.sidenavOpen;
+    this.sidenavExpanded = !this.sidenavExpanded;
   }
 }
