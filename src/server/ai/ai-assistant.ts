@@ -19,6 +19,9 @@ export interface Transaction {
     patternType: string;
     linkedTransactionIds: string[];
   };
+  // Order linking fields
+  isContextOnly?: boolean;     // True for Amazon orders (not real bank transactions)
+  linkedOrderIds?: string[];   // IDs of linked Amazon orders
 }
 
 export interface Category {
@@ -133,11 +136,18 @@ export class AIAssistant {
   }
 
   /**
+   * Get bank transactions (excluding context-only items like Amazon orders)
+   */
+  private getBankTransactions(): Transaction[] {
+    return this.transactions.filter(t => !t.isContextOnly);
+  }
+
+  /**
    * Get total spending
    */
   private getTotalSpending(query: string): AssistantResponse {
     const period = this.extractPeriod(query);
-    const filtered = this.filterByPeriod(this.transactions, period);
+    const filtered = this.filterByPeriod(this.getBankTransactions(), period);
     const expenses = filtered.filter(t => t.amount < 0);
     const total = Math.abs(expenses.reduce((sum, t) => sum + t.amount, 0));
 
@@ -163,7 +173,7 @@ export class AIAssistant {
     const period = this.extractPeriod(query);
     const category = this.extractCategory(query);
 
-    const filtered = this.filterByPeriod(this.transactions, period);
+    const filtered = this.filterByPeriod(this.getBankTransactions(), period);
     const categoryTx = category
       ? filtered.filter(t => t.category?.toLowerCase() === category.toLowerCase() && t.amount < 0)
       : filtered.filter(t => t.amount < 0);
@@ -198,7 +208,7 @@ export class AIAssistant {
     const period = this.extractPeriod(query);
     const category = this.extractCategory(query);
 
-    let filtered = this.filterByPeriod(this.transactions, period);
+    let filtered = this.filterByPeriod(this.getBankTransactions(), period);
 
     if (category) {
       filtered = filtered.filter(t => t.category?.toLowerCase() === category.toLowerCase());
@@ -230,7 +240,7 @@ export class AIAssistant {
    */
   private getTopCategories(query: string): AssistantResponse {
     const period = this.extractPeriod(query);
-    const filtered = this.filterByPeriod(this.transactions, period);
+    const filtered = this.filterByPeriod(this.getBankTransactions(), period);
 
     const categoryTotals = new Map<string, number>();
     filtered.filter(t => t.amount < 0).forEach(t => {
@@ -265,7 +275,7 @@ export class AIAssistant {
    * Get recent transactions
    */
   private getRecentTransactions(): AssistantResponse {
-    const recent = this.transactions
+    const recent = this.getBankTransactions()
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
       .slice(0, 10);
 
@@ -292,13 +302,14 @@ export class AIAssistant {
     const now = new Date();
     const thisMonth = now.getMonth();
     const thisYear = now.getFullYear();
+    const bankTx = this.getBankTransactions();
 
-    const currentMonthTx = this.transactions.filter(t => {
+    const currentMonthTx = bankTx.filter(t => {
       const d = new Date(t.date);
       return d.getMonth() === thisMonth && d.getFullYear() === thisYear;
     });
 
-    const lastMonthTx = this.transactions.filter(t => {
+    const lastMonthTx = bankTx.filter(t => {
       const d = new Date(t.date);
       const lastMonth = thisMonth === 0 ? 11 : thisMonth - 1;
       const lastMonthYear = thisMonth === 0 ? thisYear - 1 : thisYear;
@@ -339,7 +350,7 @@ export class AIAssistant {
    */
   private getIncome(query: string): AssistantResponse {
     const period = this.extractPeriod(query);
-    const filtered = this.filterByPeriod(this.transactions, period);
+    const filtered = this.filterByPeriod(this.getBankTransactions(), period);
     const income = filtered.filter(t => t.amount > 0);
     const total = income.reduce((sum, t) => sum + t.amount, 0);
 
@@ -551,24 +562,28 @@ Guidelines:
    * Prepare context summary for AI
    */
   private prepareContextSummary(): string {
-    const totalTransactions = this.transactions.length;
+    // Separate real bank transactions from context-only (Amazon orders)
+    const bankTransactions = this.transactions.filter(t => !t.isContextOnly);
+    const contextOnlyTransactions = this.transactions.filter(t => t.isContextOnly);
+
+    const totalTransactions = bankTransactions.length;
     const totalSpending = Math.abs(
-      this.transactions.filter(t => t.amount < 0).reduce((sum, t) => sum + t.amount, 0)
+      bankTransactions.filter(t => t.amount < 0).reduce((sum, t) => sum + t.amount, 0)
     );
-    const totalIncome = this.transactions
+    const totalIncome = bankTransactions
       .filter(t => t.amount > 0)
       .reduce((sum, t) => sum + t.amount, 0);
 
     const categories = this.categories.map(c => c.name).join(', ');
 
-    // Get date range
-    const dates = this.transactions.map(t => new Date(t.date).getTime());
+    // Get date range from bank transactions only
+    const dates = bankTransactions.map(t => new Date(t.date).getTime());
     const minDate = dates.length > 0 ? new Date(Math.min(...dates)).toLocaleDateString() : 'N/A';
     const maxDate = dates.length > 0 ? new Date(Math.max(...dates)).toLocaleDateString() : 'N/A';
 
     // Top 5 categories by spending
     const categoryTotals = new Map<string, number>();
-    this.transactions.filter(t => t.amount < 0).forEach(t => {
+    bankTransactions.filter(t => t.amount < 0).forEach(t => {
       const cat = t.category || 'Uncategorized';
       categoryTotals.set(cat, (categoryTotals.get(cat) || 0) + Math.abs(t.amount));
     });
@@ -578,14 +593,55 @@ Guidelines:
       .map(([name, total]) => `${name}: €${total.toFixed(2)}`)
       .join(', ');
 
-    return `
-- Total transactions: ${totalTransactions}
+    // Count transactions with linked orders
+    const transactionsWithLinkedOrders = bankTransactions.filter(
+      t => t.linkedOrderIds && t.linkedOrderIds.length > 0
+    ).length;
+
+    let summary = `
+- Total bank transactions: ${totalTransactions}
 - Date range: ${minDate} to ${maxDate}
 - Total spending: €${totalSpending.toFixed(2)}
 - Total income: €${totalIncome.toFixed(2)}
 - Available categories: ${categories}
-- Top spending categories: ${topCategories}
-`;
+- Top spending categories: ${topCategories}`;
+
+    // Add order linking information if relevant
+    if (contextOnlyTransactions.length > 0 || transactionsWithLinkedOrders > 0) {
+      summary += `
+- Amazon orders (for context): ${contextOnlyTransactions.length}
+- Bank transactions with linked order details: ${transactionsWithLinkedOrders}`;
+    }
+
+    return summary;
+  }
+
+  /**
+   * Get linked order details for a specific transaction
+   */
+  getLinkedOrderDetails(transactionId: string): Transaction[] {
+    const transaction = this.transactions.find(t => t.id === transactionId);
+    if (!transaction || !transaction.linkedOrderIds?.length) {
+      return [];
+    }
+
+    return this.transactions.filter(t =>
+      transaction.linkedOrderIds!.includes(t.id)
+    );
+  }
+
+  /**
+   * Build enhanced description with linked order details
+   */
+  buildEnhancedDescription(transaction: Transaction): string {
+    const linkedOrders = this.getLinkedOrderDetails(transaction.id);
+
+    if (linkedOrders.length === 0) {
+      return transaction.description;
+    }
+
+    const orderDetails = linkedOrders.map(o => o.description).join('; ');
+    return `${transaction.description} [Linked orders: ${orderDetails}]`;
   }
 }
 

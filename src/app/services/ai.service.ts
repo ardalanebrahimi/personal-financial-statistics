@@ -81,18 +81,32 @@ export class AIService {
 
   // ==================== Original AI Categorization ====================
 
-  async suggestCategory(description: string): Promise<string> {
+  /**
+   * Suggest a category for a transaction using AI
+   * @param description - The transaction description (e.g., "AMAZON.DE")
+   * @param linkedOrderDetails - Optional array of linked order descriptions for context
+   */
+  async suggestCategory(description: string, linkedOrderDetails?: string[]): Promise<string> {
     const existingCategories = this.categoryService.getCategories();
     const apiKey = environment.openAiApiKey;
     const endpoint = 'https://api.openai.com/v1/chat/completions';
 
-    const systemPrompt = existingCategories.length > 0
+    // Build system prompt
+    let systemPrompt = existingCategories.length > 0
       ? `You are a financial transaction categorizer. Given a transaction description, respond ONLY with a category name.
          If the transaction fits one of these existing categories, use it: ${existingCategories.map(c => c.name).join(', ')}.
          If it doesn't fit any existing category, respond with a new, concise category name (1-3 words maximum).
          DO NOT include any explanations, punctuation, or additional text.`
       : `You are a financial transaction categorizer. Given a transaction description, respond ONLY with a concise category name (1-3 words maximum).
          DO NOT include any explanations, punctuation, or additional text.`;
+
+    // Build user message with linked order context if available
+    let userMessage = description;
+    if (linkedOrderDetails && linkedOrderDetails.length > 0) {
+      systemPrompt += `\n\nIMPORTANT: When linked order details are provided, use them to determine the most appropriate category.
+         The order details show what was actually purchased, which is more specific than the generic bank description.`;
+      userMessage = `Transaction: ${description}\n\nLinked Order Details:\n${linkedOrderDetails.map((d, i) => `${i + 1}. ${d}`).join('\n')}`;
+    }
 
     const response = await fetch(endpoint, {
       method: 'POST',
@@ -109,7 +123,7 @@ export class AIService {
           },
           {
             role: 'user',
-            content: description
+            content: userMessage
           }
         ],
         max_tokens: 10,
@@ -320,8 +334,9 @@ export class AIService {
 
   /**
    * Smart categorization that tries rules first, then falls back to AI
+   * Now includes linked order details for better AI categorization
    */
-  async smartCategorize(transaction: any): Promise<{
+  async smartCategorize(transaction: any, linkedOrders?: any[]): Promise<{
     category: string;
     source: 'rule' | 'ai' | 'linked' | 'existing';
     confidence: number;
@@ -348,13 +363,20 @@ export class AIService {
       };
     }
 
-    // 3. Fall back to AI categorization
+    // 3. Fall back to AI categorization with linked order context
     try {
-      const aiCategory = await this.suggestCategory(transaction.description);
+      // Extract linked order descriptions for context
+      const linkedOrderDetails = linkedOrders?.map(order => order.description) || [];
+
+      const aiCategory = await this.suggestCategory(transaction.description, linkedOrderDetails);
+
+      // Higher confidence when we have linked order details
+      const confidence = linkedOrderDetails.length > 0 ? 70 : 50;
+
       return {
         category: aiCategory,
         source: 'ai',
-        confidence: 50
+        confidence
       };
     } catch (error) {
       return {
@@ -363,5 +385,31 @@ export class AIService {
         confidence: 0
       };
     }
+  }
+
+  /**
+   * Categorize a transaction with its linked orders fetched from API
+   */
+  async categorizeWithLinkedOrders(transaction: any): Promise<{
+    category: string;
+    source: 'rule' | 'ai' | 'linked' | 'existing';
+    confidence: number;
+    ruleId?: string;
+  }> {
+    let linkedOrders: any[] = [];
+
+    // Fetch linked orders if transaction has any
+    if (transaction.linkedOrderIds?.length) {
+      try {
+        const response = await this.http.get<{ linkedOrders: any[] }>(
+          `${environment.apiUrl}/order-matching/linked/${transaction.id}`
+        ).toPromise();
+        linkedOrders = response?.linkedOrders || [];
+      } catch (error) {
+        console.warn('Failed to fetch linked orders:', error);
+      }
+    }
+
+    return this.smartCategorize(transaction, linkedOrders);
   }
 }

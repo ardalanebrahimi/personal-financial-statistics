@@ -118,7 +118,7 @@ POST /api/matching/unlink       - Remove link between order and transaction
 
 ---
 
-## Phase 4: AI Enhancement
+## Phase 4: AI Enhancement ✅ COMPLETED
 
 ### Enhanced Categorization Prompt
 
@@ -161,10 +161,11 @@ Linked order details:
 - [x] Add linked orders badge/indicator to transaction cards
 - [x] Add visual indicator for context-only transactions (orange gradient)
 
-### Phase 4: AI Enhancement
-- [ ] Update AI service to fetch linked orders
-- [ ] Enhance categorization prompt with order details
-- [ ] Test improved categorization accuracy
+### Phase 4: AI Enhancement ✅ COMPLETED
+- [x] Update AI service to fetch linked orders (categorizeWithLinkedOrders method)
+- [x] Enhance categorization prompt with order details
+- [x] Update AI assistant to exclude context-only transactions from statistics
+- [x] Add helper methods for linked order details in AI assistant
 
 ---
 
