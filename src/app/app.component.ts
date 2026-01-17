@@ -29,6 +29,10 @@ import { AiFabComponent } from './shared/ai-fab/ai-fab.component';
               <mat-icon>receipt_long</mat-icon>
               <span *ngIf="sidenavExpanded">Transactions</span>
             </a>
+            <a mat-button routerLink="/trends" routerLinkActive="active" [matTooltip]="sidenavExpanded ? '' : 'Trends'" matTooltipPosition="right">
+              <mat-icon>insights</mat-icon>
+              <span *ngIf="sidenavExpanded">Trends</span>
+            </a>
             <a mat-button routerLink="/settings" routerLinkActive="active" [matTooltip]="sidenavExpanded ? '' : 'Settings'" matTooltipPosition="right">
               <mat-icon>settings</mat-icon>
               <span *ngIf="sidenavExpanded">Settings</span>

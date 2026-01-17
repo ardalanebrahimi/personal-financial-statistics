@@ -10,6 +10,10 @@ export const routes: Routes = [
     path: 'transactions',
     loadComponent: () => import('./features/transactions/transactions.component').then(m => m.TransactionsComponent)
   },
+  {
+    path: 'trends',
+    loadComponent: () => import('./features/trends/trends.component').then(m => m.TrendsComponent)
+  },
   // Analytics merged into Dashboard Charts tab
   {
     path: 'analytics',
