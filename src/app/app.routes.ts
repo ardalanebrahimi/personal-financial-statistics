@@ -1,25 +1,18 @@
 import { Routes } from '@angular/router';
 
 export const routes: Routes = [
+  // Main routes
   {
     path: 'dashboard',
     loadComponent: () => import('./features/dashboard/dashboard.component').then(m => m.DashboardComponent)
-  },
-  {
-    path: 'connectors',
-    loadComponent: () => import('./features/connectors/connectors.component').then(m => m.ConnectorsComponent)
   },
   {
     path: 'transactions',
     loadComponent: () => import('./features/transactions/transactions.component').then(m => m.TransactionsComponent)
   },
   {
-    path: 'upload',
-    loadComponent: () => import('./features/upload/upload.component').then(m => m.UploadComponent)
-  },
-  {
-    path: 'import/amazon',
-    loadComponent: () => import('./features/import/amazon-import.component').then(m => m.AmazonImportComponent)
+    path: 'connectors',
+    loadComponent: () => import('./features/connectors/connectors.component').then(m => m.ConnectorsComponent)
   },
   {
     path: 'categories',
@@ -30,10 +23,6 @@ export const routes: Routes = [
     loadComponent: () => import('./features/analytics/analytics.component').then(m => m.AnalyticsComponent)
   },
   {
-    path: 'ai-assistant',
-    loadComponent: () => import('./features/ai-chat/ai-chat.component').then(m => m.AiChatComponent)
-  },
-  {
     path: 'help',
     loadComponent: () => import('./features/help/help.component').then(m => m.HelpComponent)
   },
@@ -41,6 +30,25 @@ export const routes: Routes = [
     path: 'settings',
     loadComponent: () => import('./features/settings/settings.component').then(m => m.SettingsComponent)
   },
+
+  // Redirects for deprecated routes (imports merged into transactions)
+  {
+    path: 'upload',
+    redirectTo: 'transactions',
+    pathMatch: 'full'
+  },
+  {
+    path: 'import/amazon',
+    redirectTo: 'transactions',
+    pathMatch: 'full'
+  },
+  {
+    path: 'ai-assistant',
+    redirectTo: 'dashboard',
+    pathMatch: 'full'
+  },
+
+  // Default route
   {
     path: '',
     redirectTo: 'dashboard',

@@ -15,6 +15,8 @@ import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatPaginatorModule, PageEvent } from '@angular/material/paginator';
+import { MatMenuModule } from '@angular/material/menu';
+import { MatDividerModule } from '@angular/material/divider';
 import { DragDropModule, CdkDragDrop, CdkDrag, CdkDropList, moveItemInArray, transferArrayItem } from '@angular/cdk/drag-drop';
 import { Subscription } from 'rxjs';
 
@@ -26,6 +28,7 @@ import { TransactionCardComponent } from './transaction-card.component';
 import { MergeDialogComponent } from './merge-dialog.component';
 import { SplitDialogComponent } from './split-dialog.component';
 import { TransactionDetailDialogComponent, TransactionDetailDialogResult } from './transaction-detail-dialog.component';
+import { ImportDialogComponent, ImportDialogResult } from './import-dialog.component';
 
 interface UndoAction {
   type: 'category' | 'merge' | 'split' | 'delete' | 'edit';
@@ -53,6 +56,8 @@ interface UndoAction {
     MatTooltipModule,
     MatProgressSpinnerModule,
     MatPaginatorModule,
+    MatMenuModule,
+    MatDividerModule,
     DragDropModule,
     TransactionCardComponent
   ],
@@ -75,6 +80,25 @@ interface UndoAction {
           </mat-button-toggle-group>
         </div>
         <div class="toolbar-right">
+          <button mat-raised-button color="primary" [matMenuTriggerFor]="importMenu">
+            <mat-icon>cloud_upload</mat-icon>
+            Import
+          </button>
+          <mat-menu #importMenu>
+            <button mat-menu-item (click)="openImportDialog('csv')">
+              <mat-icon>description</mat-icon>
+              <span>Bank Statement (CSV)</span>
+            </button>
+            <button mat-menu-item (click)="openImportDialog('amazon')">
+              <mat-icon>shopping_cart</mat-icon>
+              <span>Amazon Orders</span>
+            </button>
+            <mat-divider></mat-divider>
+            <button mat-menu-item disabled>
+              <mat-icon>add</mat-icon>
+              <span>More sources coming soon...</span>
+            </button>
+          </mat-menu>
           <button mat-button (click)="toggleFilters()">
             <mat-icon>filter_list</mat-icon>
             Filters
@@ -1127,6 +1151,27 @@ export class TransactionsComponent implements OnInit, OnDestroy {
     a.download = 'transactions.csv';
     a.click();
     window.URL.revokeObjectURL(url);
+  }
+
+  // Import
+  openImportDialog(type: 'csv' | 'amazon') {
+    const dialogRef = this.dialog.open(ImportDialogComponent, {
+      width: '700px',
+      maxHeight: '90vh',
+      data: { initialTab: type, categories: this.categories }
+    });
+
+    dialogRef.afterClosed().subscribe((result: ImportDialogResult) => {
+      if (result?.imported) {
+        this.snackBar.open(
+          `Imported ${result.count} transaction(s)`,
+          '',
+          { duration: 3000 }
+        );
+        // Reload transactions
+        this.transactionService.loadTransactions();
+      }
+    });
   }
 
   // Undo

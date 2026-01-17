@@ -27,14 +27,6 @@ import { AiFabComponent } from './shared/ai-fab/ai-fab.component';
               <mat-icon>receipt_long</mat-icon>
               Transactions
             </a>
-            <a mat-button routerLink="/upload" routerLinkActive="active">
-              <mat-icon>upload</mat-icon>
-              Upload Data
-            </a>
-            <a mat-button routerLink="/import/amazon" routerLinkActive="active">
-              <mat-icon>shopping_cart</mat-icon>
-              Amazon Import
-            </a>
             <a mat-button routerLink="/categories" routerLinkActive="active">
               <mat-icon>category</mat-icon>
               Categories
