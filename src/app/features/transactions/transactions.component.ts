@@ -14,6 +14,7 @@ import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { MatPaginatorModule, PageEvent } from '@angular/material/paginator';
 import { DragDropModule, CdkDragDrop, CdkDrag, CdkDropList, moveItemInArray, transferArrayItem } from '@angular/cdk/drag-drop';
 import { Subscription } from 'rxjs';
 
@@ -23,6 +24,7 @@ import { Transaction, Category } from '../../core/models/transaction.model';
 import { TransactionCardComponent } from './transaction-card.component';
 import { MergeDialogComponent } from './merge-dialog.component';
 import { SplitDialogComponent } from './split-dialog.component';
+import { TransactionDetailDialogComponent, TransactionDetailDialogResult } from './transaction-detail-dialog.component';
 
 interface UndoAction {
   type: 'category' | 'merge' | 'split' | 'delete' | 'edit';
@@ -49,6 +51,7 @@ interface UndoAction {
     MatDialogModule,
     MatTooltipModule,
     MatProgressSpinnerModule,
+    MatPaginatorModule,
     DragDropModule,
     TransactionCardComponent
   ],
@@ -88,56 +91,108 @@ interface UndoAction {
 
       <!-- Filters Panel -->
       <div class="filters-panel" *ngIf="showFilters">
-        <mat-form-field appearance="outline">
-          <mat-label>Search</mat-label>
-          <input matInput [(ngModel)]="filters.search" (input)="applyFilters()" placeholder="Description or beneficiary...">
-          <mat-icon matSuffix>search</mat-icon>
-        </mat-form-field>
+        <!-- Row 1: Basic filters -->
+        <div class="filter-row">
+          <mat-form-field appearance="outline">
+            <mat-label>Search</mat-label>
+            <input matInput [(ngModel)]="filters.search" (input)="applyFilters()" placeholder="Description...">
+            <mat-icon matSuffix>search</mat-icon>
+          </mat-form-field>
 
-        <mat-form-field appearance="outline">
-          <mat-label>Start Date</mat-label>
-          <input matInput [matDatepicker]="startPicker" [(ngModel)]="filters.startDate" (dateChange)="applyFilters()">
-          <mat-datepicker-toggle matSuffix [for]="startPicker"></mat-datepicker-toggle>
-          <mat-datepicker #startPicker></mat-datepicker>
-        </mat-form-field>
+          <mat-form-field appearance="outline">
+            <mat-label>Start Date</mat-label>
+            <input matInput [matDatepicker]="startPicker" [(ngModel)]="filters.startDate" (dateChange)="applyFilters()">
+            <mat-datepicker-toggle matSuffix [for]="startPicker"></mat-datepicker-toggle>
+            <mat-datepicker #startPicker></mat-datepicker>
+          </mat-form-field>
 
-        <mat-form-field appearance="outline">
-          <mat-label>End Date</mat-label>
-          <input matInput [matDatepicker]="endPicker" [(ngModel)]="filters.endDate" (dateChange)="applyFilters()">
-          <mat-datepicker-toggle matSuffix [for]="endPicker"></mat-datepicker-toggle>
-          <mat-datepicker #endPicker></mat-datepicker>
-        </mat-form-field>
+          <mat-form-field appearance="outline">
+            <mat-label>End Date</mat-label>
+            <input matInput [matDatepicker]="endPicker" [(ngModel)]="filters.endDate" (dateChange)="applyFilters()">
+            <mat-datepicker-toggle matSuffix [for]="endPicker"></mat-datepicker-toggle>
+            <mat-datepicker #endPicker></mat-datepicker>
+          </mat-form-field>
 
-        <mat-form-field appearance="outline">
-          <mat-label>Category</mat-label>
-          <mat-select [(ngModel)]="filters.category" (selectionChange)="applyFilters()">
-            <mat-option [value]="''">All Categories</mat-option>
-            <mat-option value="__uncategorized__">Uncategorized</mat-option>
-            <mat-option *ngFor="let cat of categories" [value]="cat.name">{{ cat.name }}</mat-option>
-          </mat-select>
-        </mat-form-field>
+          <mat-form-field appearance="outline">
+            <mat-label>Category</mat-label>
+            <mat-select [(ngModel)]="filters.category" (selectionChange)="applyFilters()">
+              <mat-option [value]="''">All Categories</mat-option>
+              <mat-option value="__uncategorized__">Uncategorized</mat-option>
+              <mat-option *ngFor="let cat of categories" [value]="cat.name">{{ cat.name }}</mat-option>
+            </mat-select>
+          </mat-form-field>
 
-        <mat-form-field appearance="outline">
-          <mat-label>Type</mat-label>
-          <mat-select [(ngModel)]="filters.type" (selectionChange)="applyFilters()">
-            <mat-option [value]="''">All</mat-option>
-            <mat-option value="expense">Expenses</mat-option>
-            <mat-option value="income">Income</mat-option>
-          </mat-select>
-        </mat-form-field>
+          <mat-form-field appearance="outline">
+            <mat-label>Type</mat-label>
+            <mat-select [(ngModel)]="filters.type" (selectionChange)="applyFilters()">
+              <mat-option [value]="''">All</mat-option>
+              <mat-option value="expense">Expenses</mat-option>
+              <mat-option value="income">Income</mat-option>
+            </mat-select>
+          </mat-form-field>
 
-        <mat-form-field appearance="outline">
-          <mat-label>Source</mat-label>
-          <mat-select [(ngModel)]="filters.source" (selectionChange)="applyFilters()">
-            <mat-option [value]="''">All Sources</mat-option>
-            <mat-option *ngFor="let source of sources" [value]="source">{{ source }}</mat-option>
-          </mat-select>
-        </mat-form-field>
+          <mat-form-field appearance="outline">
+            <mat-label>Source</mat-label>
+            <mat-select [(ngModel)]="filters.source" (selectionChange)="applyFilters()">
+              <mat-option [value]="''">All Sources</mat-option>
+              <mat-option *ngFor="let source of sources" [value]="source">{{ source }}</mat-option>
+            </mat-select>
+          </mat-form-field>
+        </div>
 
-        <button mat-stroked-button (click)="resetFilters()">
-          <mat-icon>clear</mat-icon>
-          Reset
-        </button>
+        <!-- Row 2: Enhanced filters -->
+        <div class="filter-row">
+          <mat-form-field appearance="outline" class="amount-field">
+            <mat-label>Min Amount</mat-label>
+            <input matInput type="number" [(ngModel)]="filters.amountMin" (input)="applyFilters()" placeholder="0">
+            <span matTextPrefix>€&nbsp;</span>
+          </mat-form-field>
+
+          <mat-form-field appearance="outline" class="amount-field">
+            <mat-label>Max Amount</mat-label>
+            <input matInput type="number" [(ngModel)]="filters.amountMax" (input)="applyFilters()" placeholder="∞">
+            <span matTextPrefix>€&nbsp;</span>
+          </mat-form-field>
+
+          <mat-form-field appearance="outline">
+            <mat-label>Beneficiary</mat-label>
+            <input matInput [(ngModel)]="filters.beneficiary" (input)="applyFilters()" placeholder="Filter by beneficiary...">
+          </mat-form-field>
+
+          <mat-form-field appearance="outline">
+            <mat-label>Linked</mat-label>
+            <mat-select [(ngModel)]="filters.hasMatch" (selectionChange)="applyFilters()">
+              <mat-option [value]="''">All</mat-option>
+              <mat-option value="yes">Has Links</mat-option>
+              <mat-option value="no">No Links</mat-option>
+            </mat-select>
+          </mat-form-field>
+
+          <button mat-stroked-button (click)="resetFilters()">
+            <mat-icon>clear</mat-icon>
+            Reset
+          </button>
+        </div>
+
+        <!-- Row 3: Quick date buttons -->
+        <div class="quick-dates">
+          <span class="quick-dates-label">Quick:</span>
+          <button mat-stroked-button (click)="setQuickDateFilter('thisMonth')" [class.active]="isQuickDateActive('thisMonth')">
+            This Month
+          </button>
+          <button mat-stroked-button (click)="setQuickDateFilter('lastMonth')" [class.active]="isQuickDateActive('lastMonth')">
+            Last Month
+          </button>
+          <button mat-stroked-button (click)="setQuickDateFilter('thisYear')" [class.active]="isQuickDateActive('thisYear')">
+            This Year
+          </button>
+          <button mat-stroked-button (click)="setQuickDateFilter('lastYear')" [class.active]="isQuickDateActive('lastYear')">
+            Last Year
+          </button>
+          <button mat-stroked-button (click)="setQuickDateFilter('all')" [class.active]="isQuickDateActive('all')">
+            All Time
+          </button>
+        </div>
       </div>
 
       <!-- Summary Bar -->
@@ -183,7 +238,7 @@ interface UndoAction {
             <p>Try adjusting your filters or import some transactions.</p>
           </div>
 
-          <ng-container *ngFor="let transaction of filteredTransactions; let i = index; trackBy: trackByFn">
+          <ng-container *ngFor="let transaction of paginatedTransactions; let i = index; trackBy: trackByFn">
             <div cdkDrag
                  [cdkDragData]="transaction"
                  class="drag-wrapper"
@@ -213,6 +268,17 @@ interface UndoAction {
               <div *cdkDragPlaceholder class="drag-placeholder"></div>
             </div>
           </ng-container>
+
+          <!-- Pagination -->
+          <mat-paginator
+            *ngIf="filteredTransactions.length > 0"
+            [length]="filteredTransactions.length"
+            [pageSize]="pageSize"
+            [pageIndex]="pageIndex"
+            [pageSizeOptions]="pageSizeOptions"
+            (page)="onPageChange($event)"
+            showFirstLastButtons>
+          </mat-paginator>
         </div>
 
         <!-- Category Sidebar -->
@@ -325,17 +391,50 @@ interface UndoAction {
 
     .filters-panel {
       display: flex;
-      flex-wrap: wrap;
-      gap: 16px;
+      flex-direction: column;
+      gap: 12px;
       padding: 16px 24px;
       background: white;
       border-bottom: 1px solid #e0e0e0;
     }
 
-    .filters-panel mat-form-field {
+    .filter-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .filter-row mat-form-field {
       flex: 1;
-      min-width: 150px;
-      max-width: 200px;
+      min-width: 140px;
+      max-width: 180px;
+    }
+
+    .filter-row .amount-field {
+      max-width: 120px;
+    }
+
+    .quick-dates {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .quick-dates-label {
+      font-size: 13px;
+      color: #666;
+      margin-right: 4px;
+    }
+
+    .quick-dates button {
+      font-size: 12px;
+    }
+
+    .quick-dates button.active {
+      background-color: #1976d2;
+      color: white;
     }
 
     .summary-bar {
@@ -598,8 +697,18 @@ export class TransactionsComponent implements OnInit, OnDestroy {
     endDate: undefined as Date | undefined,
     category: '',
     type: '',
-    source: ''
+    source: '',
+    // Enhanced filters
+    amountMin: undefined as number | undefined,
+    amountMax: undefined as number | undefined,
+    beneficiary: '',
+    hasMatch: '' as '' | 'yes' | 'no'
   };
+
+  // Pagination
+  pageSize = 50;
+  pageIndex = 0;
+  pageSizeOptions = [25, 50, 100, 250];
 
   selectedTransactions: Transaction[] = [];
   expandedIds = new Set<string>();
@@ -691,10 +800,32 @@ export class TransactionsComponent implements OnInit, OnDestroy {
       result = result.filter(t => t.source?.connectorType === this.filters.source);
     }
 
+    // Enhanced filters
+    if (this.filters.amountMin !== undefined && this.filters.amountMin !== null) {
+      result = result.filter(t => Math.abs(t.amount) >= this.filters.amountMin!);
+    }
+
+    if (this.filters.amountMax !== undefined && this.filters.amountMax !== null) {
+      result = result.filter(t => Math.abs(t.amount) <= this.filters.amountMax!);
+    }
+
+    if (this.filters.beneficiary) {
+      const beneficiary = this.filters.beneficiary.toLowerCase();
+      result = result.filter(t => t.beneficiary?.toLowerCase().includes(beneficiary));
+    }
+
+    if (this.filters.hasMatch === 'yes') {
+      result = result.filter(t => t.matchInfo);
+    } else if (this.filters.hasMatch === 'no') {
+      result = result.filter(t => !t.matchInfo);
+    }
+
     // Sort by date descending
     result.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
     this.filteredTransactions = result;
+    // Reset to first page when filters change
+    this.pageIndex = 0;
   }
 
   resetFilters() {
@@ -704,9 +835,83 @@ export class TransactionsComponent implements OnInit, OnDestroy {
       endDate: undefined,
       category: '',
       type: '',
-      source: ''
+      source: '',
+      amountMin: undefined,
+      amountMax: undefined,
+      beneficiary: '',
+      hasMatch: ''
     };
+    this.pageIndex = 0;
     this.applyFilters();
+  }
+
+  // Pagination
+  get paginatedTransactions(): Transaction[] {
+    const start = this.pageIndex * this.pageSize;
+    return this.filteredTransactions.slice(start, start + this.pageSize);
+  }
+
+  onPageChange(event: PageEvent) {
+    this.pageIndex = event.pageIndex;
+    this.pageSize = event.pageSize;
+  }
+
+  // Quick date filters
+  setQuickDateFilter(period: 'thisMonth' | 'lastMonth' | 'thisYear' | 'lastYear' | 'all') {
+    const now = new Date();
+    switch (period) {
+      case 'thisMonth':
+        this.filters.startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+        this.filters.endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+        break;
+      case 'lastMonth':
+        this.filters.startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        this.filters.endDate = new Date(now.getFullYear(), now.getMonth(), 0);
+        break;
+      case 'thisYear':
+        this.filters.startDate = new Date(now.getFullYear(), 0, 1);
+        this.filters.endDate = new Date(now.getFullYear(), 11, 31);
+        break;
+      case 'lastYear':
+        this.filters.startDate = new Date(now.getFullYear() - 1, 0, 1);
+        this.filters.endDate = new Date(now.getFullYear() - 1, 11, 31);
+        break;
+      case 'all':
+        this.filters.startDate = undefined;
+        this.filters.endDate = undefined;
+        break;
+    }
+    this.applyFilters();
+  }
+
+  isQuickDateActive(period: 'thisMonth' | 'lastMonth' | 'thisYear' | 'lastYear' | 'all'): boolean {
+    if (!this.filters.startDate && !this.filters.endDate) {
+      return period === 'all';
+    }
+    if (!this.filters.startDate || !this.filters.endDate) {
+      return false;
+    }
+    const now = new Date();
+    const start = this.filters.startDate;
+    const end = this.filters.endDate;
+
+    switch (period) {
+      case 'thisMonth':
+        return start.getMonth() === now.getMonth() && start.getFullYear() === now.getFullYear() &&
+               end.getMonth() === now.getMonth() && end.getFullYear() === now.getFullYear();
+      case 'lastMonth':
+        const lastMonth = now.getMonth() === 0 ? 11 : now.getMonth() - 1;
+        const lastMonthYear = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+        return start.getMonth() === lastMonth && start.getFullYear() === lastMonthYear;
+      case 'thisYear':
+        return start.getFullYear() === now.getFullYear() && start.getMonth() === 0 &&
+               end.getFullYear() === now.getFullYear() && end.getMonth() === 11;
+      case 'lastYear':
+        return start.getFullYear() === now.getFullYear() - 1 && start.getMonth() === 0 &&
+               end.getFullYear() === now.getFullYear() - 1 && end.getMonth() === 11;
+      default:
+        return false;
+    }
   }
 
   toggleFilters() {
@@ -800,8 +1005,49 @@ export class TransactionsComponent implements OnInit, OnDestroy {
   }
 
   onEditTransaction(transaction: Transaction) {
-    // Could open a full edit dialog
-    this.snackBar.open('Double-click fields to edit inline', '', { duration: 2000 });
+    // Get linked transactions if this transaction has matches
+    let linkedTransactions: Transaction[] = [];
+    if (transaction.matchInfo?.linkedTransactionIds) {
+      linkedTransactions = this.transactions.filter(t =>
+        transaction.matchInfo!.linkedTransactionIds.includes(t.id)
+      );
+    }
+
+    const dialogRef = this.dialog.open(TransactionDetailDialogComponent, {
+      width: '600px',
+      maxHeight: '90vh',
+      data: {
+        transaction: transaction,
+        categories: this.categories,
+        linkedTransactions: linkedTransactions
+      }
+    });
+
+    dialogRef.afterClosed().subscribe((result: TransactionDetailDialogResult) => {
+      if (!result) return;
+
+      switch (result.action) {
+        case 'save':
+          if (result.transaction) {
+            this.transactionService.updateTransaction(result.transaction);
+            this.snackBar.open('Transaction updated', '', { duration: 2000 });
+          }
+          break;
+        case 'delete':
+          this.onDeleteTransaction(transaction);
+          break;
+        case 'split':
+          this.onSplitTransaction(transaction);
+          break;
+        case 'merge':
+          this.onMergeTransaction(transaction);
+          break;
+        case 'askAI':
+          // TODO: Open AI FAB with this transaction context
+          this.snackBar.open('AI Assistant coming soon!', '', { duration: 2000 });
+          break;
+      }
+    });
   }
 
   onDeleteTransaction(transaction: Transaction) {
