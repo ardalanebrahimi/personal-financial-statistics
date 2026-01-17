@@ -6,6 +6,7 @@ import { connectorManager } from './connectors/connector-manager';
 import type { ConnectorType as CMConnectorType } from './connectors/connector-manager';
 import { getBrowserService } from './browser';
 import { TransactionMatcher, applyMatchesToTransactions, TransactionMatch as MatcherTransactionMatch, MatchSuggestion, StoredTransaction as MatcherStoredTransaction } from './matching/matcher';
+import { OrderMatcher, applyOrderMatches, getLinkedOrderDetails, OrderMatchResult, OrderMatchSuggestion, MatchableTransaction } from './matching/order-matcher';
 import { AmazonConnector } from './connectors/amazon-connector';
 import { RulesEngine, Rule, StoredTransaction as RulesStoredTransaction } from './ai/rules-engine';
 import { CrossAccountIntelligence, EnrichedTransaction } from './ai/cross-account-intelligence';
@@ -1571,6 +1572,248 @@ app.get('/matching/:id', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error getting match:', error);
     return res.status(500).json({ error: 'Failed to get match' });
+  }
+});
+
+// ==================== ORDER MATCHING ENDPOINTS ====================
+
+// POST /order-matching/run - Run order matching algorithm (Amazon orders → Bank transactions)
+app.post('/order-matching/run', async (req: Request, res: Response) => {
+  try {
+    const transactions = await getStoredTransactions();
+
+    // Convert to matchable format
+    const matchableTransactions: MatchableTransaction[] = transactions.map(tx => ({
+      id: tx.id,
+      date: tx.date,
+      description: tx.description,
+      amount: tx.amount,
+      category: tx.category,
+      beneficiary: tx.beneficiary,
+      source: tx.source,
+      isContextOnly: tx.isContextOnly,
+      linkedOrderIds: tx.linkedOrderIds
+    }));
+
+    // Run order matching
+    const matcher = new OrderMatcher(matchableTransactions);
+    const result = matcher.runMatching();
+
+    // Apply auto-matches to transactions
+    if (result.autoMatches.length > 0) {
+      const updatedTransactions = applyOrderMatches(matchableTransactions, result.autoMatches);
+
+      // Save updated transactions
+      for (const tx of updatedTransactions) {
+        const storedTx = transactions.find(t => t.id === tx.id);
+        if (storedTx && tx.linkedOrderIds && tx.linkedOrderIds.length > 0) {
+          storedTx.linkedOrderIds = tx.linkedOrderIds;
+          db.updateTransaction(storedTx);
+        }
+      }
+    }
+
+    return res.json({
+      success: true,
+      autoMatches: result.autoMatches,
+      suggestions: result.suggestions,
+      stats: result.stats
+    });
+  } catch (error) {
+    console.error('Error running order matching:', error);
+    return res.status(500).json({ error: 'Failed to run order matching' });
+  }
+});
+
+// GET /order-matching/suggestions - Get order match suggestions without applying
+app.get('/order-matching/suggestions', async (req: Request, res: Response) => {
+  try {
+    const transactions = await getStoredTransactions();
+
+    const matchableTransactions: MatchableTransaction[] = transactions.map(tx => ({
+      id: tx.id,
+      date: tx.date,
+      description: tx.description,
+      amount: tx.amount,
+      category: tx.category,
+      beneficiary: tx.beneficiary,
+      source: tx.source,
+      isContextOnly: tx.isContextOnly,
+      linkedOrderIds: tx.linkedOrderIds
+    }));
+
+    const matcher = new OrderMatcher(matchableTransactions);
+    const result = matcher.runMatching();
+
+    return res.json({
+      autoMatches: result.autoMatches,
+      suggestions: result.suggestions,
+      stats: result.stats
+    });
+  } catch (error) {
+    console.error('Error getting order match suggestions:', error);
+    return res.status(500).json({ error: 'Failed to get suggestions' });
+  }
+});
+
+// POST /order-matching/link - Manually link orders to a bank transaction
+app.post('/order-matching/link', async (req: Request, res: Response) => {
+  try {
+    const { bankTransactionId, orderIds } = req.body;
+
+    if (!bankTransactionId || !orderIds || !Array.isArray(orderIds)) {
+      return res.status(400).json({ error: 'bankTransactionId and orderIds array required' });
+    }
+
+    const transactions = await getStoredTransactions();
+
+    // Find the bank transaction
+    const bankTx = transactions.find(tx => tx.id === bankTransactionId);
+    if (!bankTx) {
+      return res.status(404).json({ error: 'Bank transaction not found' });
+    }
+
+    if (bankTx.isContextOnly) {
+      return res.status(400).json({ error: 'Cannot link orders to a context-only transaction' });
+    }
+
+    // Verify all orders exist and are context-only
+    for (const orderId of orderIds) {
+      const order = transactions.find(tx => tx.id === orderId);
+      if (!order) {
+        return res.status(404).json({ error: `Order ${orderId} not found` });
+      }
+      if (!order.isContextOnly) {
+        return res.status(400).json({ error: `Transaction ${orderId} is not a context-only order` });
+      }
+    }
+
+    // Update the bank transaction with linked orders
+    bankTx.linkedOrderIds = orderIds;
+    db.updateTransaction(bankTx);
+
+    return res.json({
+      success: true,
+      message: `Linked ${orderIds.length} order(s) to bank transaction`,
+      bankTransaction: bankTx
+    });
+  } catch (error) {
+    console.error('Error linking orders:', error);
+    return res.status(500).json({ error: 'Failed to link orders' });
+  }
+});
+
+// POST /order-matching/unlink - Remove order links from a bank transaction
+app.post('/order-matching/unlink', async (req: Request, res: Response) => {
+  try {
+    const { bankTransactionId, orderIds } = req.body;
+
+    if (!bankTransactionId) {
+      return res.status(400).json({ error: 'bankTransactionId required' });
+    }
+
+    const transactions = await getStoredTransactions();
+    const bankTx = transactions.find(tx => tx.id === bankTransactionId);
+
+    if (!bankTx) {
+      return res.status(404).json({ error: 'Bank transaction not found' });
+    }
+
+    if (!bankTx.linkedOrderIds || bankTx.linkedOrderIds.length === 0) {
+      return res.status(400).json({ error: 'Bank transaction has no linked orders' });
+    }
+
+    // If specific orderIds provided, remove only those; otherwise remove all
+    if (orderIds && Array.isArray(orderIds) && orderIds.length > 0) {
+      bankTx.linkedOrderIds = bankTx.linkedOrderIds.filter(
+        id => !orderIds.includes(id)
+      );
+    } else {
+      bankTx.linkedOrderIds = [];
+    }
+
+    db.updateTransaction(bankTx);
+
+    return res.json({
+      success: true,
+      message: 'Order links removed',
+      bankTransaction: bankTx
+    });
+  } catch (error) {
+    console.error('Error unlinking orders:', error);
+    return res.status(500).json({ error: 'Failed to unlink orders' });
+  }
+});
+
+// GET /order-matching/linked/:id - Get linked orders for a bank transaction
+app.get('/order-matching/linked/:id', async (req: Request, res: Response) => {
+  try {
+    const bankTransactionId = req.params['id'];
+    const transactions = await getStoredTransactions();
+
+    const bankTx = transactions.find(tx => tx.id === bankTransactionId);
+    if (!bankTx) {
+      return res.status(404).json({ error: 'Bank transaction not found' });
+    }
+
+    if (!bankTx.linkedOrderIds || bankTx.linkedOrderIds.length === 0) {
+      return res.json({
+        bankTransaction: bankTx,
+        linkedOrders: [],
+        totalOrderAmount: 0
+      });
+    }
+
+    // Get linked order details
+    const linkedOrders = transactions.filter(tx =>
+      bankTx.linkedOrderIds!.includes(tx.id)
+    );
+
+    const totalOrderAmount = linkedOrders.reduce(
+      (sum, order) => sum + Math.abs(order.amount), 0
+    );
+
+    return res.json({
+      bankTransaction: bankTx,
+      linkedOrders,
+      totalOrderAmount,
+      amountDifference: Math.abs(Math.abs(bankTx.amount) - totalOrderAmount)
+    });
+  } catch (error) {
+    console.error('Error getting linked orders:', error);
+    return res.status(500).json({ error: 'Failed to get linked orders' });
+  }
+});
+
+// GET /transactions/context-only - Get only context-only transactions (orders)
+app.get('/transactions/context-only', async (req: Request, res: Response) => {
+  try {
+    const transactions = await getStoredTransactions();
+    const contextOnly = transactions.filter(tx => tx.isContextOnly);
+
+    return res.json({
+      transactions: contextOnly,
+      total: contextOnly.length
+    });
+  } catch (error) {
+    console.error('Error getting context-only transactions:', error);
+    return res.status(500).json({ error: 'Failed to get context-only transactions' });
+  }
+});
+
+// GET /transactions/bank-only - Get only real bank transactions (excluding context-only)
+app.get('/transactions/bank-only', async (req: Request, res: Response) => {
+  try {
+    const transactions = await getStoredTransactions();
+    const bankOnly = transactions.filter(tx => !tx.isContextOnly);
+
+    return res.json({
+      transactions: bankOnly,
+      total: bankOnly.length
+    });
+  } catch (error) {
+    console.error('Error getting bank transactions:', error);
+    return res.status(500).json({ error: 'Failed to get bank transactions' });
   }
 });
 

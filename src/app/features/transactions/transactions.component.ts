@@ -193,6 +193,15 @@ interface UndoAction {
             </mat-select>
           </mat-form-field>
 
+          <mat-form-field appearance="outline">
+            <mat-label>Orders</mat-label>
+            <mat-select [(ngModel)]="filters.showContextOnly" (selectionChange)="applyFilters()">
+              <mat-option [value]="''">Hide Orders</mat-option>
+              <mat-option value="all">Show All</mat-option>
+              <mat-option value="only">Only Orders</mat-option>
+            </mat-select>
+          </mat-form-field>
+
           <button mat-stroked-button (click)="resetFilters()">
             <mat-icon>clear</mat-icon>
             Reset
@@ -728,7 +737,8 @@ export class TransactionsComponent implements OnInit, OnDestroy {
     amountMin: undefined as number | undefined,
     amountMax: undefined as number | undefined,
     beneficiary: '',
-    hasMatch: '' as '' | 'yes' | 'no'
+    hasMatch: '' as '' | 'yes' | 'no',
+    showContextOnly: '' as '' | 'hide' | 'only' // Filter context-only (Amazon orders) transactions
   };
 
   // Pagination
@@ -845,10 +855,18 @@ export class TransactionsComponent implements OnInit, OnDestroy {
     }
 
     if (this.filters.hasMatch === 'yes') {
-      result = result.filter(t => t.matchInfo);
+      result = result.filter(t => t.matchInfo || (t.linkedOrderIds && t.linkedOrderIds.length > 0));
     } else if (this.filters.hasMatch === 'no') {
-      result = result.filter(t => !t.matchInfo);
+      result = result.filter(t => !t.matchInfo && (!t.linkedOrderIds || t.linkedOrderIds.length === 0));
     }
+
+    // Filter context-only (Amazon orders) - default to hiding them
+    if (this.filters.showContextOnly === '' || this.filters.showContextOnly === 'hide') {
+      result = result.filter(t => !t.isContextOnly);
+    } else if (this.filters.showContextOnly === 'only') {
+      result = result.filter(t => t.isContextOnly);
+    }
+    // 'all' shows everything, no filter applied
 
     // Sort by date descending
     result.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -869,7 +887,8 @@ export class TransactionsComponent implements OnInit, OnDestroy {
       amountMin: undefined,
       amountMax: undefined,
       beneficiary: '',
-      hasMatch: ''
+      hasMatch: '',
+      showContextOnly: '' // Default: hide context-only (Amazon orders)
     };
     this.pageIndex = 0;
     this.applyFilters();
@@ -1130,16 +1149,27 @@ export class TransactionsComponent implements OnInit, OnDestroy {
   async runMatching() {
     this.isMatching = true;
     try {
-      const response = await fetch('http://localhost:3000/matching/run', { method: 'POST' });
-      const result = await response.json();
+      // Run both transaction matching and order matching
+      const [matchingResponse, orderMatchingResponse] = await Promise.all([
+        fetch('http://localhost:3000/matching/run', { method: 'POST' }),
+        fetch('http://localhost:3000/order-matching/run', { method: 'POST' })
+      ]);
+
+      const matchingResult = await matchingResponse.json();
+      const orderMatchingResult = await orderMatchingResponse.json();
+
+      const totalMatches = (matchingResult.newMatches || 0) + (orderMatchingResult.autoMatches?.length || 0);
+      const totalSuggestions = (matchingResult.suggestions || 0) + (orderMatchingResult.suggestions?.length || 0);
+
       this.snackBar.open(
-        `Matching complete: ${result.newMatches} matches, ${result.suggestions} suggestions`,
+        `Matching complete: ${totalMatches} auto-matches, ${totalSuggestions} suggestions`,
         '',
         { duration: 4000 }
       );
       // Reload transactions
       await this.transactionService.loadTransactions();
     } catch (error) {
+      console.error('Matching error:', error);
       this.snackBar.open('Matching failed', '', { duration: 3000 });
     }
     this.isMatching = false;

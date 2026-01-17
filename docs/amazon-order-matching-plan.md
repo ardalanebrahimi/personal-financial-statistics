@@ -32,11 +32,11 @@ Amazon orders imported into the system contain detailed product information (e.g
 
 ---
 
-## Phase 1: Data Model Changes ✅
+## Phase 1: Data Model Changes ✅ COMPLETED
 
 ### Transaction Model Updates
-- Add `linkedOrderIds: string[]` - references to linked order details
-- Add `isContextOnly: boolean` - true for Amazon orders (not real transactions)
+- [x] Add `linkedOrderIds: string[]` - references to linked order details
+- [x] Add `isContextOnly: boolean` - true for Amazon orders (not real transactions)
 
 ### Database Schema
 ```sql
@@ -51,7 +51,7 @@ ALTER TABLE transactions ADD COLUMN linked_order_ids TEXT DEFAULT '[]';
 
 ---
 
-## Phase 2: Matching Engine 🔄
+## Phase 2: Matching Engine ✅ COMPLETED
 
 ### Matching Algorithm
 
@@ -143,17 +143,17 @@ Linked order details:
 
 ## Implementation Checklist
 
-### Phase 1: Data Model ✅
-- [ ] Add `isContextOnly` to Transaction model
-- [ ] Add `linkedOrderIds` to Transaction model
-- [ ] Update database schema
-- [ ] Migrate existing Amazon data to set `isContextOnly = true`
+### Phase 1: Data Model ✅ COMPLETED
+- [x] Add `isContextOnly` to Transaction model
+- [x] Add `linkedOrderIds` to Transaction model
+- [x] Update database schema
+- [x] Migrate existing Amazon data to set `isContextOnly = true`
 
-### Phase 2: Matching Engine
-- [ ] Create MatchingService with algorithm
-- [ ] Add API endpoints for matching operations
-- [ ] Implement "Run Matching" button functionality
-- [ ] Create match review/confirmation UI
+### Phase 2: Matching Engine ✅ COMPLETED
+- [x] Create MatchingService with algorithm (order-matcher.ts)
+- [x] Add API endpoints for matching operations
+- [x] Implement "Run Matching" button functionality
+- [x] Add filter for context-only (Amazon orders) transactions
 
 ### Phase 3: UI Updates
 - [ ] Add filter for context-only transactions

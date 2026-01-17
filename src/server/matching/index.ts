@@ -16,3 +16,16 @@ export {
   type MatchSource,
   type MatchConfidence
 } from './matcher';
+
+// Order matching (Amazon orders → Bank transactions)
+export {
+  OrderMatcher,
+  applyOrderMatches,
+  getLinkedOrderDetails,
+  type OrderMatchResult,
+  type OrderMatchSuggestion,
+  type OrderMatchingResult,
+  type OrderMatchConfidence,
+  type OrderMatchType,
+  type MatchableTransaction
+} from './order-matcher';
