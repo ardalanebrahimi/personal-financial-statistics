@@ -10,9 +10,11 @@ export const routes: Routes = [
     path: 'transactions',
     loadComponent: () => import('./features/transactions/transactions.component').then(m => m.TransactionsComponent)
   },
+  // Analytics merged into Dashboard Charts tab
   {
     path: 'analytics',
-    loadComponent: () => import('./features/analytics/analytics.component').then(m => m.AnalyticsComponent)
+    redirectTo: 'dashboard?tab=charts',
+    pathMatch: 'full'
   },
   {
     path: 'settings',

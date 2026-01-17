@@ -23,10 +23,6 @@ import { AiFabComponent } from './shared/ai-fab/ai-fab.component';
               <mat-icon>receipt_long</mat-icon>
               Transactions
             </a>
-            <a mat-button routerLink="/analytics" routerLinkActive="active">
-              <mat-icon>analytics</mat-icon>
-              Analytics
-            </a>
             <a mat-button routerLink="/settings" routerLinkActive="active">
               <mat-icon>settings</mat-icon>
               Settings
