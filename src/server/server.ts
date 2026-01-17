@@ -1853,6 +1853,117 @@ app.post('/ai/chat/clear', async (req: Request, res: Response) => {
   }
 });
 
+// POST /ai/similar-transactions - Find similar transactions
+app.post('/ai/similar-transactions', async (req: Request, res: Response) => {
+  try {
+    const { transactionId, description, beneficiary, amount } = req.body;
+
+    if (!transactionId && !description) {
+      return res.status(400).json({ error: 'Transaction ID or description is required' });
+    }
+
+    const transactions = await getStoredTransactions();
+    let targetTx: StoredTransaction | undefined;
+
+    if (transactionId) {
+      targetTx = transactions.find(t => t.id === transactionId);
+      if (!targetTx) {
+        return res.status(404).json({ error: 'Transaction not found' });
+      }
+    }
+
+    const targetDescription = targetTx?.description || description || '';
+    const targetBeneficiary = targetTx?.beneficiary || beneficiary || '';
+    const targetAmount = targetTx?.amount || amount;
+
+    // Find similar transactions based on:
+    // 1. Description similarity (contains same key words)
+    // 2. Same beneficiary
+    // 3. Similar amount (within 20%)
+    const descWords = targetDescription.toLowerCase().split(/\s+/).filter((w: string) => w.length > 3);
+
+    const similar = transactions.filter(t => {
+      // Skip the source transaction
+      if (targetTx && t.id === targetTx.id) return false;
+
+      // Check description similarity
+      const txDescWords = t.description.toLowerCase().split(/\s+/).filter((w: string) => w.length > 3);
+      const commonWords = descWords.filter((w: string) => txDescWords.includes(w));
+      const descSimilarity = descWords.length > 0 ? commonWords.length / descWords.length : 0;
+
+      // Check beneficiary match
+      const beneficiaryMatch = targetBeneficiary && t.beneficiary &&
+        t.beneficiary.toLowerCase().includes(targetBeneficiary.toLowerCase());
+
+      // Check amount similarity (within 20%)
+      const amountMatch = targetAmount !== undefined &&
+        Math.abs(t.amount - targetAmount) / Math.abs(targetAmount) <= 0.2;
+
+      // Transaction is similar if:
+      // - Description is >= 50% similar, OR
+      // - Beneficiary matches, OR
+      // - Amount is similar AND at least 30% description similarity
+      return descSimilarity >= 0.5 ||
+             beneficiaryMatch ||
+             (amountMatch && descSimilarity >= 0.3);
+    });
+
+    // Sort by date descending
+    similar.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+    // Limit to 50 results
+    const limitedSimilar = similar.slice(0, 50);
+
+    return res.json({
+      sourceTransaction: targetTx || { description: targetDescription, beneficiary: targetBeneficiary, amount: targetAmount },
+      similarTransactions: limitedSimilar,
+      totalFound: similar.length
+    });
+  } catch (error) {
+    console.error('Error finding similar transactions:', error);
+    return res.status(500).json({ error: 'Failed to find similar transactions' });
+  }
+});
+
+// POST /ai/apply-category-to-similar - Apply category to similar transactions
+app.post('/ai/apply-category-to-similar', async (req: Request, res: Response) => {
+  try {
+    const { transactionId, category, transactionIds } = req.body;
+
+    if (!category) {
+      return res.status(400).json({ error: 'Category is required' });
+    }
+
+    if (!transactionIds || !Array.isArray(transactionIds) || transactionIds.length === 0) {
+      return res.status(400).json({ error: 'Transaction IDs are required' });
+    }
+
+    const transactions = await getStoredTransactions();
+    let updatedCount = 0;
+
+    for (const id of transactionIds) {
+      const tx = transactions.find(t => t.id === id);
+      if (tx) {
+        tx.category = category;
+        updatedCount++;
+      }
+    }
+
+    if (updatedCount > 0) {
+      await bulkSaveTransactions(transactions);
+    }
+
+    return res.json({
+      success: true,
+      message: `Applied category "${category}" to ${updatedCount} transaction(s)`,
+      updatedCount
+    });
+  } catch (error) {
+    console.error('Error applying category to similar:', error);
+    return res.status(500).json({ error: 'Failed to apply category' });
+  }
+});
+
 // ==================== CROSS-ACCOUNT INTELLIGENCE ENDPOINTS ====================
 
 // POST /ai/enrich - Enrich a transaction with cross-account data

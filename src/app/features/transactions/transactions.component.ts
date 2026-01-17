@@ -20,6 +20,7 @@ import { Subscription } from 'rxjs';
 
 import { TransactionService } from '../../services/transaction.service';
 import { CategoryService } from '../../services/category.service';
+import { AIContextService } from '../../services/ai-context.service';
 import { Transaction, Category } from '../../core/models/transaction.model';
 import { TransactionCardComponent } from './transaction-card.component';
 import { MergeDialogComponent } from './merge-dialog.component';
@@ -723,6 +724,7 @@ export class TransactionsComponent implements OnInit, OnDestroy {
   constructor(
     private transactionService: TransactionService,
     private categoryService: CategoryService,
+    private aiContextService: AIContextService,
     private snackBar: MatSnackBar,
     private dialog: MatDialog
   ) {}
@@ -1043,8 +1045,7 @@ export class TransactionsComponent implements OnInit, OnDestroy {
           this.onMergeTransaction(transaction);
           break;
         case 'askAI':
-          // TODO: Open AI FAB with this transaction context
-          this.snackBar.open('AI Assistant coming soon!', '', { duration: 2000 });
+          this.aiContextService.askAboutTransaction(transaction);
           break;
       }
     });

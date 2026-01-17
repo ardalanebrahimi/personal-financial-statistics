@@ -5,6 +5,7 @@ import { MatSidenavModule } from '@angular/material/sidenav';
 import { MatToolbarModule } from '@angular/material/toolbar';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
+import { AiFabComponent } from './shared/ai-fab/ai-fab.component';
 
 @Component({
   selector: 'app-root',
@@ -42,10 +43,6 @@ import { MatIconModule } from '@angular/material/icon';
               <mat-icon>analytics</mat-icon>
               Analytics
             </a>
-            <a mat-button routerLink="/ai-assistant" routerLinkActive="active">
-              <mat-icon>smart_toy</mat-icon>
-              AI Assistant
-            </a>
             <a mat-button routerLink="/settings" routerLinkActive="active">
               <mat-icon>settings</mat-icon>
               Settings
@@ -66,6 +63,9 @@ import { MatIconModule } from '@angular/material/icon';
         </main>
       </mat-sidenav-content>
     </mat-sidenav-container>
+
+    <!-- Global AI FAB -->
+    <app-ai-fab></app-ai-fab>
   `,
   styles: [`
     :host {
@@ -100,7 +100,8 @@ import { MatIconModule } from '@angular/material/icon';
     MatSidenavModule,
     MatToolbarModule,
     MatButtonModule,
-    MatIconModule
+    MatIconModule,
+    AiFabComponent
   ],
   standalone: true
 })
