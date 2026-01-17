@@ -60,7 +60,8 @@ import { AiFabComponent } from './shared/ai-fab/ai-fab.component';
     mat-sidenav {
       width: 250px;
       transition: width 0.3s ease;
-      overflow-x: hidden;
+      overflow: hidden;
+      background-color: #fafafa;
     }
     mat-sidenav.collapsed {
       width: 64px;
@@ -70,7 +71,6 @@ import { AiFabComponent } from './shared/ai-fab/ai-fab.component';
     }
     .nav-content {
       padding: 0.75rem;
-      width: 250px;
     }
     .nav-header {
       display: flex;
@@ -87,6 +87,10 @@ import { AiFabComponent } from './shared/ai-fab/ai-fab.component';
       font-size: 1.1rem;
       white-space: nowrap;
       overflow: hidden;
+      color: #333;
+    }
+    .nav-header button {
+      color: #555;
     }
     nav {
       display: flex;
@@ -100,13 +104,18 @@ import { AiFabComponent } from './shared/ai-fab/ai-fab.component';
       justify-content: flex-start;
       min-width: 40px;
       padding: 8px 12px;
+      color: #555;
     }
     .collapsed nav a {
       justify-content: center;
       padding: 8px;
     }
+    nav a:hover {
+      background-color: rgba(0, 0, 0, 0.04);
+    }
     nav a.active {
-      background-color: rgba(0, 0, 0, 0.08);
+      background-color: rgba(63, 81, 181, 0.12);
+      color: #3f51b5;
       font-weight: 500;
     }
     nav a mat-icon {
