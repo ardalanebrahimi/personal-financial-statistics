@@ -33,6 +33,7 @@ import { SplitDialogComponent } from './split-dialog.component';
 import { TransactionDetailDialogComponent, TransactionDetailDialogResult } from './transaction-detail-dialog.component';
 import { ImportDialogComponent, ImportDialogResult } from './import-dialog.component';
 import { DuplicatesDialogComponent, DuplicatesDialogResult } from './duplicates-dialog.component';
+import { MatchingOverviewDialogComponent } from './matching-overview-dialog.component';
 
 interface UndoAction {
   type: 'category' | 'merge' | 'split' | 'delete' | 'edit';
@@ -99,10 +100,9 @@ interface UndoAction {
               <mat-icon>shopping_cart</mat-icon>
               <span>Amazon Orders</span>
             </button>
-            <mat-divider></mat-divider>
-            <button mat-menu-item disabled>
-              <mat-icon>add</mat-icon>
-              <span>More sources coming soon...</span>
+            <button mat-menu-item (click)="openImportDialog('paypal')">
+              <mat-icon>account_balance_wallet</mat-icon>
+              <span>PayPal Transactions</span>
             </button>
           </mat-menu>
           <button mat-button (click)="toggleFilters()">
@@ -112,6 +112,10 @@ interface UndoAction {
           <button mat-button (click)="runMatching()" [disabled]="isMatching">
             <mat-icon>link</mat-icon>
             Run Matching
+          </button>
+          <button mat-button (click)="openMatchingOverview()">
+            <mat-icon>dashboard</mat-icon>
+            Matching Overview
           </button>
           <button mat-raised-button color="accent" [matMenuTriggerFor]="categorizeMenu" [disabled]="isCategorizing">
             <mat-icon>auto_fix_high</mat-icon>
@@ -236,11 +240,32 @@ interface UndoAction {
           </mat-form-field>
 
           <mat-form-field appearance="outline">
-            <mat-label>Orders</mat-label>
+            <mat-label>External Data</mat-label>
             <mat-select [(ngModel)]="filters.showContextOnly" (selectionChange)="applyFilters()">
-              <mat-option [value]="''">Hide Orders</mat-option>
+              <mat-option [value]="''">Hide External</mat-option>
               <mat-option value="all">Show All</mat-option>
-              <mat-option value="only">Only Orders</mat-option>
+              <mat-option value="only">Only External</mat-option>
+            </mat-select>
+          </mat-form-field>
+
+          <mat-form-field appearance="outline">
+            <mat-label>Platform</mat-label>
+            <mat-select [(ngModel)]="filters.platform" (selectionChange)="applyFilters()">
+              <mat-option [value]="''">All Platforms</mat-option>
+              <mat-divider></mat-divider>
+              <mat-option value="amazon">
+                <mat-icon class="amazon-icon">shopping_cart</mat-icon> Amazon (All)
+              </mat-option>
+              <mat-option value="amazon-unlinked">
+                <mat-icon class="warning-icon">warning</mat-icon> Amazon Unlinked
+              </mat-option>
+              <mat-divider></mat-divider>
+              <mat-option value="paypal">
+                <mat-icon class="paypal-icon">account_balance_wallet</mat-icon> PayPal (All)
+              </mat-option>
+              <mat-option value="paypal-unlinked">
+                <mat-icon class="warning-icon">warning</mat-icon> PayPal Unlinked
+              </mat-option>
             </mat-select>
           </mat-form-field>
 
@@ -806,6 +831,19 @@ interface UndoAction {
     .cdk-drop-list-dragging .drag-wrapper:not(.cdk-drag-placeholder) {
       transition: transform 250ms cubic-bezier(0, 0, 0.2, 1);
     }
+
+    /* Platform filter icons */
+    .amazon-icon {
+      color: #ff9800 !important;
+    }
+
+    .paypal-icon {
+      color: #0070ba !important;
+    }
+
+    .warning-icon {
+      color: #ff9800 !important;
+    }
   `]
 })
 export class TransactionsComponent implements OnInit, OnDestroy {
@@ -834,8 +872,18 @@ export class TransactionsComponent implements OnInit, OnDestroy {
     amountMax: undefined as number | undefined,
     beneficiary: '',
     hasMatch: '' as '' | 'yes' | 'no',
-    showContextOnly: '' as '' | 'hide' | 'only' // Filter context-only (Amazon orders) transactions
+    showContextOnly: '' as '' | 'all' | 'only', // Filter context-only (Amazon/PayPal) transactions
+    platform: '' as '' | 'amazon' | 'paypal' | 'amazon-unlinked' | 'paypal-unlinked' // Platform filter
   };
+
+  // Platform detection patterns (same as in transaction-card)
+  private readonly AMAZON_PATTERNS = [
+    /amazon/i, /amzn/i, /amazon\.de/i, /amazon\s+payments/i,
+    /amazon\s+eu/i, /amz\*|amzn\*/i, /amazon\s+prime/i, /prime\s+video/i
+  ];
+  private readonly PAYPAL_PATTERNS = [
+    /paypal/i, /pp\s*\*/i, /paypal\s*\(europe\)/i, /paypal\s*pte/i, /paypal\s*europe/i
+  ];
 
   // Pagination
   pageSize = 50;
@@ -957,13 +1005,62 @@ export class TransactionsComponent implements OnInit, OnDestroy {
       result = result.filter(t => !t.matchInfo && (!t.linkedOrderIds || t.linkedOrderIds.length === 0));
     }
 
-    // Filter context-only (Amazon orders) - default to hiding them
-    if (this.filters.showContextOnly === '' || this.filters.showContextOnly === 'hide') {
-      result = result.filter(t => !t.isContextOnly);
-    } else if (this.filters.showContextOnly === 'only') {
-      result = result.filter(t => t.isContextOnly);
+    // Platform filter - takes precedence over external data filter for unlinked views
+    if (this.filters.platform) {
+      if (this.filters.platform === 'amazon') {
+        // All Amazon-related (bank charges + orders) - apply external data filter
+        result = result.filter(t =>
+          this.detectPlatform(t) === 'amazon' ||
+          (t.isContextOnly && t.source?.connectorType === 'amazon')
+        );
+        // Then apply external data filter
+        if (this.filters.showContextOnly === '') {
+          result = result.filter(t => !t.isContextOnly);
+        } else if (this.filters.showContextOnly === 'only') {
+          result = result.filter(t => t.isContextOnly);
+        }
+      } else if (this.filters.platform === 'paypal') {
+        // All PayPal-related (bank charges + imports) - apply external data filter
+        result = result.filter(t =>
+          this.detectPlatform(t) === 'paypal' ||
+          (t.isContextOnly && t.source?.connectorType === 'paypal')
+        );
+        // Then apply external data filter
+        if (this.filters.showContextOnly === '') {
+          result = result.filter(t => !t.isContextOnly);
+        } else if (this.filters.showContextOnly === 'only') {
+          result = result.filter(t => t.isContextOnly);
+        }
+      } else if (this.filters.platform === 'amazon-unlinked') {
+        // Amazon bank charges without linked orders - IGNORES external data filter
+        // Must start from full transaction list to find bank transactions
+        result = this.transactions.filter(t =>
+          this.detectPlatform(t) === 'amazon' &&
+          !t.isContextOnly &&
+          (!t.linkedOrderIds || t.linkedOrderIds.length === 0)
+        );
+        // Re-apply other filters (except showContextOnly)
+        result = this.applyNonContextFilters(result);
+      } else if (this.filters.platform === 'paypal-unlinked') {
+        // PayPal bank charges without linked imports - IGNORES external data filter
+        // Must start from full transaction list to find bank transactions
+        result = this.transactions.filter(t =>
+          this.detectPlatform(t) === 'paypal' &&
+          !t.isContextOnly &&
+          (!t.linkedOrderIds || t.linkedOrderIds.length === 0)
+        );
+        // Re-apply other filters (except showContextOnly)
+        result = this.applyNonContextFilters(result);
+      }
+    } else {
+      // No platform filter - apply external data filter normally
+      if (this.filters.showContextOnly === '') {
+        result = result.filter(t => !t.isContextOnly);
+      } else if (this.filters.showContextOnly === 'only') {
+        result = result.filter(t => t.isContextOnly);
+      }
+      // 'all' shows everything, no filter applied
     }
-    // 'all' shows everything, no filter applied
 
     // Sort by date descending
     result.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -985,10 +1082,82 @@ export class TransactionsComponent implements OnInit, OnDestroy {
       amountMax: undefined,
       beneficiary: '',
       hasMatch: '',
-      showContextOnly: '' // Default: hide context-only (Amazon orders)
+      showContextOnly: '', // Default: hide context-only (Amazon/PayPal external data)
+      platform: ''
     };
     this.pageIndex = 0;
     this.applyFilters();
+  }
+
+  // Helper method to apply filters except showContextOnly (for platform unlinked filters)
+  private applyNonContextFilters(result: Transaction[]): Transaction[] {
+    if (this.filters.search) {
+      const search = this.filters.search.toLowerCase();
+      result = result.filter(t =>
+        t.description.toLowerCase().includes(search) ||
+        t.beneficiary?.toLowerCase().includes(search)
+      );
+    }
+
+    if (this.filters.startDate) {
+      result = result.filter(t => new Date(t.date) >= this.filters.startDate!);
+    }
+
+    if (this.filters.endDate) {
+      result = result.filter(t => new Date(t.date) <= this.filters.endDate!);
+    }
+
+    if (this.filters.category) {
+      if (this.filters.category === '__uncategorized__') {
+        result = result.filter(t => !t.category);
+      } else {
+        result = result.filter(t => t.category === this.filters.category);
+      }
+    }
+
+    if (this.filters.type) {
+      if (this.filters.type === 'expense') {
+        result = result.filter(t => t.amount < 0);
+      } else if (this.filters.type === 'income') {
+        result = result.filter(t => t.amount > 0);
+      }
+    }
+
+    if (this.filters.amountMin !== undefined && this.filters.amountMin !== null) {
+      result = result.filter(t => Math.abs(t.amount) >= this.filters.amountMin!);
+    }
+
+    if (this.filters.amountMax !== undefined && this.filters.amountMax !== null) {
+      result = result.filter(t => Math.abs(t.amount) <= this.filters.amountMax!);
+    }
+
+    if (this.filters.beneficiary) {
+      const beneficiary = this.filters.beneficiary.toLowerCase();
+      result = result.filter(t => t.beneficiary?.toLowerCase().includes(beneficiary));
+    }
+
+    return result;
+  }
+
+  // Helper method to detect platform for a transaction
+  private detectPlatform(tx: Transaction): 'amazon' | 'paypal' | null {
+    if (tx.isContextOnly) {
+      const connectorType = tx.source?.connectorType;
+      if (connectorType === 'amazon') return 'amazon';
+      if (connectorType === 'paypal') return 'paypal';
+      return null;
+    }
+
+    // Check detectedPlatform field first
+    if (tx.detectedPlatform) {
+      return tx.detectedPlatform;
+    }
+
+    // Fallback: detect from description/beneficiary
+    const searchText = `${tx.description} ${tx.beneficiary || ''}`.toLowerCase();
+    if (this.AMAZON_PATTERNS.some(p => p.test(searchText))) return 'amazon';
+    if (this.PAYPAL_PATTERNS.some(p => p.test(searchText))) return 'paypal';
+    return null;
   }
 
   // Pagination
@@ -1256,17 +1425,23 @@ export class TransactionsComponent implements OnInit, OnDestroy {
   async runMatching() {
     this.isMatching = true;
     try {
-      // Run both transaction matching and order matching
-      const [matchingResponse, orderMatchingResponse] = await Promise.all([
+      // Run transaction matching, Amazon order matching, and PayPal matching
+      const [matchingResponse, orderMatchingResponse, paypalMatchingResponse] = await Promise.all([
         fetch('http://localhost:3000/matching/run', { method: 'POST' }),
-        fetch('http://localhost:3000/order-matching/run', { method: 'POST' })
+        fetch('http://localhost:3000/order-matching/run', { method: 'POST' }),
+        fetch('http://localhost:3000/paypal-matching/run', { method: 'POST' })
       ]);
 
       const matchingResult = await matchingResponse.json();
       const orderMatchingResult = await orderMatchingResponse.json();
+      const paypalMatchingResult = await paypalMatchingResponse.json();
 
-      const totalMatches = (matchingResult.newMatches || 0) + (orderMatchingResult.autoMatches?.length || 0);
-      const totalSuggestions = (matchingResult.suggestions || 0) + (orderMatchingResult.suggestions?.length || 0);
+      const totalMatches = (matchingResult.newMatches || 0) +
+        (orderMatchingResult.autoMatched || 0) +
+        (paypalMatchingResult.autoMatched || 0);
+      const totalSuggestions = (matchingResult.suggestions || 0) +
+        (orderMatchingResult.suggestions || 0) +
+        (paypalMatchingResult.suggestions || 0);
 
       this.snackBar.open(
         `Matching complete: ${totalMatches} auto-matches, ${totalSuggestions} suggestions`,
@@ -1282,6 +1457,22 @@ export class TransactionsComponent implements OnInit, OnDestroy {
     this.isMatching = false;
   }
 
+  // Open Matching Overview Dialog
+  openMatchingOverview() {
+    const dialogRef = this.dialog.open(MatchingOverviewDialogComponent, {
+      width: '90vw',
+      maxWidth: '1600px',
+      height: '90vh',
+      maxHeight: '90vh',
+      data: { transactions: this.transactions }
+    });
+
+    dialogRef.afterClosed().subscribe(() => {
+      // Reload transactions to reflect any changes made in the dialog
+      this.transactionService.loadTransactions();
+    });
+  }
+
   // Export
   exportCSV() {
     const csv = this.transactionService.exportToCSV(this.filteredTransactions);
@@ -1295,7 +1486,7 @@ export class TransactionsComponent implements OnInit, OnDestroy {
   }
 
   // Import
-  openImportDialog(type: 'csv' | 'amazon') {
+  openImportDialog(type: 'csv' | 'amazon' | 'paypal') {
     const dialogRef = this.dialog.open(ImportDialogComponent, {
       width: '700px',
       maxHeight: '90vh',

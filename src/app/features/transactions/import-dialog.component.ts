@@ -19,7 +19,7 @@ import { Category } from '../../core/models/transaction.model';
 import { environment } from '../../../environments/environment';
 
 export interface ImportDialogData {
-  initialTab: 'csv' | 'amazon';
+  initialTab: 'csv' | 'amazon' | 'paypal';
   categories: Category[];
 }
 
@@ -38,6 +38,21 @@ interface AmazonImportResult {
     errors: number;
     newTransactions: number;
     duplicatesSkipped: number;
+  };
+  errors?: string[];
+}
+
+interface PayPalImportResult {
+  success: boolean;
+  message: string;
+  stats: {
+    totalParsed: number;
+    imported: number;
+    skipped: number;
+    errors: number;
+    newTransactions: number;
+    duplicatesSkipped: number;
+    recurringTransactions: number;
   };
   errors?: string[];
 }
@@ -245,6 +260,109 @@ interface AmazonImportResult {
               </div>
             </div>
           </mat-tab>
+
+          <!-- PayPal Import Tab -->
+          <mat-tab>
+            <ng-template mat-tab-label>
+              <mat-icon>account_balance_wallet</mat-icon>
+              <span>PayPal</span>
+            </ng-template>
+
+            <div class="tab-content">
+              <!-- Instructions -->
+              <mat-expansion-panel class="instructions-panel">
+                <mat-expansion-panel-header>
+                  <mat-panel-title>
+                    <mat-icon>help_outline</mat-icon>
+                    How to export your PayPal transactions
+                  </mat-panel-title>
+                </mat-expansion-panel-header>
+
+                <div class="instructions">
+                  <ol>
+                    <li>Open the PayPal app on your phone</li>
+                    <li>Go to Activity / Transactions</li>
+                    <li>Select all transactions and copy them</li>
+                    <li>Paste into a text file and save as .txt</li>
+                    <li>Or use PayPal website: Activity → Download → CSV</li>
+                  </ol>
+                  <p class="hint">Note: PayPal transactions are stored as context data and matched to bank "PayPal" entries.</p>
+                </div>
+              </mat-expansion-panel>
+
+              <!-- File Upload -->
+              <div class="upload-section">
+                <input type="file" #paypalInput hidden accept=".txt,.csv" (change)="onPayPalFileSelected($event)">
+
+                <div class="drop-zone"
+                     [class.drag-over]="paypalDragOver"
+                     [class.has-file]="paypalFile"
+                     (click)="paypalInput.click()"
+                     (dragover)="onDragOver($event, 'paypal')"
+                     (dragleave)="onDragLeave($event, 'paypal')"
+                     (drop)="onDrop($event, 'paypal')">
+
+                  <mat-icon *ngIf="!paypalFile">cloud_upload</mat-icon>
+                  <mat-icon *ngIf="paypalFile" class="success">check_circle</mat-icon>
+
+                  <p *ngIf="!paypalFile">
+                    Drop your PayPal text file here or click to browse
+                  </p>
+                  <p *ngIf="paypalFile">
+                    <strong>{{ paypalFile.name }}</strong>
+                    <br>
+                    <span class="file-size">{{ formatFileSize(paypalFile.size) }}</span>
+                  </p>
+                </div>
+
+                <div class="format-hint">
+                  <mat-icon>info</mat-icon>
+                  <span>Supports PayPal app text export format (.txt)</span>
+                </div>
+              </div>
+
+              <!-- Progress -->
+              <div class="progress-section" *ngIf="paypalImporting">
+                <mat-progress-bar mode="indeterminate"></mat-progress-bar>
+                <p>Importing PayPal transactions...</p>
+              </div>
+
+              <!-- PayPal Result -->
+              <div class="result-section" *ngIf="paypalResult">
+                <div class="result-card" [class.success]="paypalResult.success" [class.error]="!paypalResult.success">
+                  <mat-icon *ngIf="paypalResult.success">check_circle</mat-icon>
+                  <mat-icon *ngIf="!paypalResult.success">error</mat-icon>
+                  <div class="result-content">
+                    <h4>{{ paypalResult.message }}</h4>
+                    <div class="stats">
+                      <span><strong>{{ paypalResult.stats.newTransactions }}</strong> new transactions imported</span>
+                      <span><strong>{{ paypalResult.stats.duplicatesSkipped }}</strong> duplicates skipped</span>
+                      <span><strong>{{ paypalResult.stats.recurringTransactions }}</strong> recurring detected</span>
+                      <span *ngIf="paypalResult.stats.errors > 0" class="errors">
+                        <strong>{{ paypalResult.stats.errors }}</strong> errors
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Error Details -->
+                <mat-expansion-panel *ngIf="paypalResult.errors && paypalResult.errors.length > 0" class="error-panel">
+                  <mat-expansion-panel-header>
+                    <mat-panel-title>
+                      <mat-icon>warning</mat-icon>
+                      {{ paypalResult.errors.length }} parsing errors
+                    </mat-panel-title>
+                  </mat-expansion-panel-header>
+                  <ul>
+                    <li *ngFor="let error of paypalResult.errors.slice(0, 20)">{{ error }}</li>
+                    <li *ngIf="paypalResult.errors.length > 20">
+                      ... and {{ paypalResult.errors.length - 20 }} more
+                    </li>
+                  </ul>
+                </mat-expansion-panel>
+              </div>
+            </div>
+          </mat-tab>
         </mat-tab-group>
       </mat-dialog-content>
 
@@ -382,6 +500,13 @@ interface AmazonImportResult {
       font-size: 12px;
     }
 
+    .instructions .hint {
+      margin-top: 12px;
+      font-size: 13px;
+      color: #666;
+      font-style: italic;
+    }
+
     .date-filter {
       display: flex;
       gap: 16px;
@@ -486,6 +611,12 @@ export class ImportDialogComponent implements OnInit {
   amazonEndDate?: Date;
   amazonResult: AmazonImportResult | null = null;
 
+  // PayPal state
+  paypalFile: File | null = null;
+  paypalDragOver = false;
+  paypalImporting = false;
+  paypalResult: PayPalImportResult | null = null;
+
   constructor(
     public dialogRef: MatDialogRef<ImportDialogComponent, ImportDialogResult>,
     @Inject(MAT_DIALOG_DATA) public data: ImportDialogData,
@@ -496,15 +627,24 @@ export class ImportDialogComponent implements OnInit {
   ) {}
 
   ngOnInit() {
-    this.selectedTab = this.data.initialTab === 'amazon' ? 1 : 0;
+    if (this.data.initialTab === 'amazon') {
+      this.selectedTab = 1;
+    } else if (this.data.initialTab === 'paypal') {
+      this.selectedTab = 2;
+    } else {
+      this.selectedTab = 0;
+    }
   }
 
   get canImport(): boolean {
-    return this.selectedTab === 0 ? !!this.csvFile : !!this.amazonFile;
+    if (this.selectedTab === 0) return !!this.csvFile;
+    if (this.selectedTab === 1) return !!this.amazonFile;
+    if (this.selectedTab === 2) return !!this.paypalFile;
+    return false;
   }
 
   get isImporting(): boolean {
-    return this.csvImporting || this.amazonImporting;
+    return this.csvImporting || this.amazonImporting || this.paypalImporting;
   }
 
   close(result?: ImportDialogResult) {
@@ -512,49 +652,58 @@ export class ImportDialogComponent implements OnInit {
   }
 
   // Drag & drop handlers
-  onDragOver(event: DragEvent, type: 'csv' | 'amazon') {
+  onDragOver(event: DragEvent, type: 'csv' | 'amazon' | 'paypal') {
     event.preventDefault();
     event.stopPropagation();
     if (type === 'csv') {
       this.csvDragOver = true;
-    } else {
+    } else if (type === 'amazon') {
       this.amazonDragOver = true;
+    } else {
+      this.paypalDragOver = true;
     }
   }
 
-  onDragLeave(event: DragEvent, type: 'csv' | 'amazon') {
+  onDragLeave(event: DragEvent, type: 'csv' | 'amazon' | 'paypal') {
     event.preventDefault();
     event.stopPropagation();
     if (type === 'csv') {
       this.csvDragOver = false;
-    } else {
+    } else if (type === 'amazon') {
       this.amazonDragOver = false;
+    } else {
+      this.paypalDragOver = false;
     }
   }
 
-  onDrop(event: DragEvent, type: 'csv' | 'amazon') {
+  onDrop(event: DragEvent, type: 'csv' | 'amazon' | 'paypal') {
     event.preventDefault();
     event.stopPropagation();
 
     if (type === 'csv') {
       this.csvDragOver = false;
-    } else {
+    } else if (type === 'amazon') {
       this.amazonDragOver = false;
+    } else {
+      this.paypalDragOver = false;
     }
 
     const files = event.dataTransfer?.files;
     if (files?.length) {
       const file = files[0];
-      if (file.name.endsWith('.csv')) {
+      if (type === 'paypal' && (file.name.endsWith('.txt') || file.name.endsWith('.csv'))) {
+        this.paypalFile = file;
+        this.paypalResult = null;
+      } else if (file.name.endsWith('.csv')) {
         if (type === 'csv') {
           this.csvFile = file;
           this.csvResult = null;
-        } else {
+        } else if (type === 'amazon') {
           this.amazonFile = file;
           this.amazonResult = null;
         }
       } else {
-        this.snackBar.open('Please select a CSV file', '', { duration: 3000 });
+        this.snackBar.open('Please select a valid file', '', { duration: 3000 });
       }
     }
   }
@@ -576,23 +725,36 @@ export class ImportDialogComponent implements OnInit {
     }
   }
 
+  onPayPalFileSelected(event: Event) {
+    const input = event.target as HTMLInputElement;
+    if (input.files?.length) {
+      this.paypalFile = input.files[0];
+      this.paypalResult = null;
+    }
+  }
+
   clearCurrentFile() {
     if (this.selectedTab === 0) {
       this.csvFile = null;
       this.csvResult = null;
-    } else {
+    } else if (this.selectedTab === 1) {
       this.amazonFile = null;
       this.amazonResult = null;
       this.amazonStartDate = undefined;
       this.amazonEndDate = undefined;
+    } else if (this.selectedTab === 2) {
+      this.paypalFile = null;
+      this.paypalResult = null;
     }
   }
 
   async import() {
     if (this.selectedTab === 0) {
       await this.importCsv();
-    } else {
+    } else if (this.selectedTab === 1) {
       await this.importAmazon();
+    } else if (this.selectedTab === 2) {
+      await this.importPayPal();
     }
   }
 
@@ -673,6 +835,45 @@ export class ImportDialogComponent implements OnInit {
     }
 
     this.amazonImporting = false;
+  }
+
+  private async importPayPal() {
+    if (!this.paypalFile) return;
+
+    this.paypalImporting = true;
+    this.paypalResult = null;
+
+    try {
+      const textData = await this.paypalFile.text();
+
+      const result = await this.http.post<PayPalImportResult>(
+        `${environment.apiUrl}/import/paypal`,
+        { textData }
+      ).toPromise();
+
+      this.paypalResult = result!;
+
+      if (result?.success && result.stats.newTransactions > 0) {
+        this.close({ imported: true, count: result.stats.newTransactions });
+      }
+    } catch (error: any) {
+      this.paypalResult = {
+        success: false,
+        message: error.error?.error || 'Import failed',
+        stats: {
+          totalParsed: 0,
+          imported: 0,
+          skipped: 0,
+          errors: 1,
+          newTransactions: 0,
+          duplicatesSkipped: 0,
+          recurringTransactions: 0
+        },
+        errors: error.error?.details ? [error.error.details] : ['Unknown error occurred']
+      };
+    }
+
+    this.paypalImporting = false;
   }
 
   formatFileSize(bytes: number): string {

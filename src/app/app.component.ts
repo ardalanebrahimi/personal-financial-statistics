@@ -34,6 +34,10 @@ import { JobStatusIndicatorComponent } from './shared/job-status-indicator.compo
               <mat-icon>insights</mat-icon>
               <span *ngIf="sidenavExpanded">Trends</span>
             </a>
+            <a mat-button routerLink="/recurring" routerLinkActive="active" [matTooltip]="sidenavExpanded ? '' : 'Recurring'" matTooltipPosition="right">
+              <mat-icon>repeat</mat-icon>
+              <span *ngIf="sidenavExpanded">Recurring</span>
+            </a>
             <a mat-button routerLink="/settings" routerLinkActive="active" [matTooltip]="sidenavExpanded ? '' : 'Settings'" matTooltipPosition="right">
               <mat-icon>settings</mat-icon>
               <span *ngIf="sidenavExpanded">Settings</span>

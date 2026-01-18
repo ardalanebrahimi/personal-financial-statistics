@@ -52,6 +52,9 @@ export interface Transaction {
 
   // Order linking - for connecting bank transactions to detailed order information
   linkedOrderIds?: string[];   // IDs of context-only transactions (orders) linked to this bank transaction
+
+  // Auto-detected payment platform based on description/beneficiary patterns
+  detectedPlatform?: 'amazon' | 'paypal' | null;
 }
 
 export interface Category {

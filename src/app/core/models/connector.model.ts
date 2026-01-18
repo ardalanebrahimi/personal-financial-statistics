@@ -31,7 +31,8 @@ export enum ConnectorType {
   SPARKASSE = 'sparkasse',
   N26 = 'n26',
   GEBUHRENFREI = 'gebuhrenfrei',
-  AMAZON = 'amazon'
+  AMAZON = 'amazon',
+  PAYPAL = 'paypal'
 }
 
 /**
@@ -149,6 +150,15 @@ export const AVAILABLE_CONNECTORS: AvailableConnector[] = [
     icon: 'shopping_cart',
     requiresBankCode: false,
     supportedMFA: [MFAType.TOTP, MFAType.SMS],
+    implemented: false
+  },
+  {
+    type: ConnectorType.PAYPAL,
+    name: 'PayPal',
+    description: 'PayPal transaction history',
+    icon: 'account_balance_wallet',
+    requiresBankCode: false,
+    supportedMFA: [MFAType.SMS, MFAType.TOTP],
     implemented: false
   }
 ];

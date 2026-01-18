@@ -2070,6 +2070,171 @@ app.delete('/matching/:id', async (req: Request, res: Response) => {
   }
 });
 
+// GET /matching/overview - Get comprehensive matching overview for Amazon/PayPal
+// NOTE: This MUST be before /matching/:id to avoid route conflict
+app.get('/matching/overview', async (req: Request, res: Response) => {
+  try {
+    const transactions = await getStoredTransactions();
+
+    // Detection patterns for payment platforms
+    const AMAZON_PATTERNS_LOCAL = [
+      /amazon/i, /amzn/i, /amazon\.de/i, /amazon\s+payments/i,
+      /amazon\s+eu/i, /amz\*|amzn\*/i, /amazon\s+prime/i, /prime\s+video/i
+    ];
+    const PAYPAL_PATTERNS_LOCAL = [
+      /paypal/i, /pp\s*\*/i, /paypal\s*\(europe\)/i, /paypal\s*pte/i, /paypal\s*europe/i
+    ];
+
+    // Helper function to detect payment platform from transaction
+    const detectPlatformLocal = (tx: StoredTransaction): 'amazon' | 'paypal' | null => {
+      if (tx.isContextOnly) return null;
+      const searchText = `${tx.description} ${tx.beneficiary || ''}`.toLowerCase();
+      if (AMAZON_PATTERNS_LOCAL.some(p => p.test(searchText))) return 'amazon';
+      if (PAYPAL_PATTERNS_LOCAL.some(p => p.test(searchText))) return 'paypal';
+      return null;
+    };
+
+    // Helper to check if a context-only transaction is linked to any bank transaction
+    const isLinkedToAnyBankLocal = (contextId: string, txs: StoredTransaction[]): boolean => {
+      return txs.some(tx =>
+        !tx.isContextOnly &&
+        tx.linkedOrderIds &&
+        tx.linkedOrderIds.includes(contextId)
+      );
+    };
+
+    // Enrich transactions with detected platform
+    const enrichedTx = transactions.map(tx => ({
+      ...tx,
+      detectedPlatform: tx.isContextOnly ? null : detectPlatformLocal(tx)
+    }));
+
+    // Amazon analysis
+    const amazonBankUnlinked = enrichedTx.filter(tx =>
+      tx.detectedPlatform === 'amazon' &&
+      !tx.isContextOnly &&
+      (!tx.linkedOrderIds || tx.linkedOrderIds.length === 0)
+    );
+
+    const amazonOrdersUnlinked = enrichedTx.filter(tx =>
+      tx.isContextOnly &&
+      tx.source?.connectorType === 'amazon' &&
+      !isLinkedToAnyBankLocal(tx.id, enrichedTx)
+    );
+
+    const amazonBankLinked = enrichedTx.filter(tx =>
+      tx.detectedPlatform === 'amazon' &&
+      !tx.isContextOnly &&
+      tx.linkedOrderIds &&
+      tx.linkedOrderIds.length > 0
+    );
+
+    // PayPal analysis
+    const paypalBankUnlinked = enrichedTx.filter(tx =>
+      tx.detectedPlatform === 'paypal' &&
+      !tx.isContextOnly &&
+      (!tx.linkedOrderIds || tx.linkedOrderIds.length === 0)
+    );
+
+    const paypalImportsUnlinked = enrichedTx.filter(tx =>
+      tx.isContextOnly &&
+      tx.source?.connectorType === 'paypal' &&
+      !isLinkedToAnyBankLocal(tx.id, enrichedTx)
+    );
+
+    const paypalBankLinked = enrichedTx.filter(tx =>
+      tx.detectedPlatform === 'paypal' &&
+      !tx.isContextOnly &&
+      tx.linkedOrderIds &&
+      tx.linkedOrderIds.length > 0
+    );
+
+    // Generate suggestions for matching
+    const generateSuggestions = (
+      bankTxs: typeof enrichedTx,
+      contextTxs: typeof enrichedTx
+    ) => {
+      const suggestions: Array<{
+        bankTransactionId: string;
+        contextIds: string[];
+        confidence: 'high' | 'medium' | 'low';
+        totalAmount: number;
+        amountDiff: number;
+      }> = [];
+
+      for (const bankTx of bankTxs) {
+        const bankDate = new Date(bankTx.date);
+        const bankAmount = Math.abs(bankTx.amount);
+
+        const candidates = contextTxs.filter(ctx => {
+          const ctxDate = new Date(ctx.date);
+          const daysDiff = Math.abs((bankDate.getTime() - ctxDate.getTime()) / 86400000);
+          return daysDiff <= 7;
+        });
+
+        for (const ctx of candidates) {
+          const ctxAmount = Math.abs(ctx.amount);
+          const amountDiff = Math.abs(ctxAmount - bankAmount);
+          const daysDiff = Math.abs((bankDate.getTime() - new Date(ctx.date).getTime()) / 86400000);
+
+          if (amountDiff < 0.05) {
+            suggestions.push({
+              bankTransactionId: bankTx.id,
+              contextIds: [ctx.id],
+              confidence: daysDiff <= 2 ? 'high' : 'medium',
+              totalAmount: ctxAmount,
+              amountDiff
+            });
+          }
+        }
+      }
+
+      return suggestions;
+    };
+
+    const amazonSuggestions = generateSuggestions(amazonBankUnlinked, amazonOrdersUnlinked);
+    const paypalSuggestions = generateSuggestions(paypalBankUnlinked, paypalImportsUnlinked);
+
+    return res.json({
+      amazon: {
+        bankUnlinked: amazonBankUnlinked,
+        ordersUnlinked: amazonOrdersUnlinked,
+        bankLinked: amazonBankLinked,
+        suggestions: amazonSuggestions,
+        stats: {
+          totalBankCharges: amazonBankLinked.length + amazonBankUnlinked.length,
+          linkedBankCharges: amazonBankLinked.length,
+          unlinkedBankCharges: amazonBankUnlinked.length,
+          totalOrders: amazonOrdersUnlinked.length + amazonBankLinked.reduce(
+            (sum, tx) => sum + (tx.linkedOrderIds?.length || 0), 0
+          ),
+          unlinkedOrders: amazonOrdersUnlinked.length,
+          suggestionCount: amazonSuggestions.length
+        }
+      },
+      paypal: {
+        bankUnlinked: paypalBankUnlinked,
+        importsUnlinked: paypalImportsUnlinked,
+        bankLinked: paypalBankLinked,
+        suggestions: paypalSuggestions,
+        stats: {
+          totalBankCharges: paypalBankLinked.length + paypalBankUnlinked.length,
+          linkedBankCharges: paypalBankLinked.length,
+          unlinkedBankCharges: paypalBankUnlinked.length,
+          totalImports: paypalImportsUnlinked.length + paypalBankLinked.reduce(
+            (sum, tx) => sum + (tx.linkedOrderIds?.length || 0), 0
+          ),
+          unlinkedImports: paypalImportsUnlinked.length,
+          suggestionCount: paypalSuggestions.length
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error getting matching overview:', error);
+    return res.status(500).json({ error: 'Failed to get matching overview' });
+  }
+});
+
 // GET /matching/:id - Get a specific match with transaction details
 app.get('/matching/:id', async (req: Request, res: Response) => {
   try {
@@ -2139,9 +2304,11 @@ app.post('/order-matching/run', async (req: Request, res: Response) => {
 
     return res.json({
       success: true,
-      autoMatches: result.autoMatches,
-      suggestions: result.suggestions,
-      stats: result.stats
+      autoMatched: result.autoMatches.length,
+      suggestions: result.suggestions.length,
+      stats: result.stats,
+      matches: result.autoMatches,
+      pendingSuggestions: result.suggestions
     });
   } catch (error) {
     console.error('Error running order matching:', error);

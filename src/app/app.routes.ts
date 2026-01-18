@@ -14,6 +14,10 @@ export const routes: Routes = [
     path: 'trends',
     loadComponent: () => import('./features/trends/trends.component').then(m => m.TrendsComponent)
   },
+  {
+    path: 'recurring',
+    loadComponent: () => import('./features/recurring/recurring.component').then(m => m.RecurringComponent)
+  },
   // Analytics merged into Dashboard Charts tab
   {
     path: 'analytics',

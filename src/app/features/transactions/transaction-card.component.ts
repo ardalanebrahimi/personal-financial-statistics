@@ -51,7 +51,17 @@ import { Transaction, Category } from '../../core/models/transaction.model';
         </mat-checkbox>
 
         <div class="card-left">
-          <div class="source-indicator" *ngIf="transaction.source">
+          <!-- Platform indicator (Amazon/PayPal) -->
+          <div class="platform-indicator" *ngIf="getPlatform() as platform">
+            <mat-icon *ngIf="platform === 'amazon'" class="amazon-icon" matTooltip="Amazon transaction">shopping_cart</mat-icon>
+            <mat-icon *ngIf="platform === 'paypal'" class="paypal-icon" matTooltip="PayPal transaction">account_balance_wallet</mat-icon>
+          </div>
+          <!-- Link status for platform transactions -->
+          <div class="link-status" *ngIf="getPlatform() && !transaction.isContextOnly">
+            <mat-icon *ngIf="hasLinks()" class="linked-icon" [matTooltip]="'Linked to ' + (transaction.linkedOrderIds?.length || 0) + ' orders'">link</mat-icon>
+            <mat-icon *ngIf="!hasLinks()" class="unlinked-icon" matTooltip="No linked orders">link_off</mat-icon>
+          </div>
+          <div class="source-indicator" *ngIf="transaction.source && !getPlatform()">
             <mat-icon [matTooltip]="transaction.source.connectorType">account_balance</mat-icon>
           </div>
           <div class="date-column">
@@ -298,6 +308,44 @@ import { Transaction, Category } from '../../core/models/transaction.model';
       font-size: 18px;
       width: 18px;
       height: 18px;
+    }
+
+    .platform-indicator {
+      display: flex;
+      align-items: center;
+    }
+
+    .platform-indicator .amazon-icon {
+      color: #ff9800;
+      font-size: 18px;
+      width: 18px;
+      height: 18px;
+    }
+
+    .platform-indicator .paypal-icon {
+      color: #0070ba;
+      font-size: 18px;
+      width: 18px;
+      height: 18px;
+    }
+
+    .link-status {
+      display: flex;
+      align-items: center;
+    }
+
+    .link-status .linked-icon {
+      color: #4caf50;
+      font-size: 16px;
+      width: 16px;
+      height: 16px;
+    }
+
+    .link-status .unlinked-icon {
+      color: #ff9800;
+      font-size: 16px;
+      width: 16px;
+      height: 16px;
     }
 
     .date-column {
@@ -720,6 +768,40 @@ export class TransactionCardComponent {
 
   onSplit() {
     this.splitTransaction.emit(this.transaction);
+  }
+
+  // Platform detection patterns
+  private readonly AMAZON_PATTERNS = [
+    /amazon/i, /amzn/i, /amazon\.de/i, /amazon\s+payments/i,
+    /amazon\s+eu/i, /amz\*|amzn\*/i, /amazon\s+prime/i, /prime\s+video/i
+  ];
+  private readonly PAYPAL_PATTERNS = [
+    /paypal/i, /pp\s*\*/i, /paypal\s*\(europe\)/i, /paypal\s*pte/i, /paypal\s*europe/i
+  ];
+
+  getPlatform(): 'amazon' | 'paypal' | null {
+    // For context-only transactions, check the source
+    if (this.transaction.isContextOnly) {
+      const connectorType = this.transaction.source?.connectorType;
+      if (connectorType === 'amazon') return 'amazon';
+      if (connectorType === 'paypal') return 'paypal';
+      return null;
+    }
+
+    // For bank transactions, check detectedPlatform or detect from description
+    if (this.transaction.detectedPlatform) {
+      return this.transaction.detectedPlatform;
+    }
+
+    // Fallback: detect from description/beneficiary
+    const searchText = `${this.transaction.description} ${this.transaction.beneficiary || ''}`.toLowerCase();
+    if (this.AMAZON_PATTERNS.some(p => p.test(searchText))) return 'amazon';
+    if (this.PAYPAL_PATTERNS.some(p => p.test(searchText))) return 'paypal';
+    return null;
+  }
+
+  hasLinks(): boolean {
+    return !!(this.transaction.linkedOrderIds && this.transaction.linkedOrderIds.length > 0);
   }
 
   getCategoryColor(): string {

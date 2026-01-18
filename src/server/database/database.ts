@@ -62,6 +62,15 @@ function runMigrations(): void {
     `).run();
     console.log(`[Database] Marked ${amazonUpdated.changes} Amazon transactions as context-only`);
   }
+
+  // Migration: Add detected_platform column
+  if (!txColumnNames.includes('detected_platform')) {
+    console.log('[Database] Running migration: Adding detected_platform column to transactions table...');
+    db.exec(`
+      ALTER TABLE transactions ADD COLUMN detected_platform TEXT;
+    `);
+    console.log('[Database] Migration complete: detected_platform column added');
+  }
 }
 
 // Run migrations before schema (in case table exists but missing columns)
@@ -109,7 +118,10 @@ CREATE TABLE IF NOT EXISTS transactions (
 
   -- Context/Order linking
   is_context_only INTEGER DEFAULT 0,  -- True for items that provide context but aren't real bank transactions (e.g., Amazon orders)
-  linked_order_ids TEXT DEFAULT '[]'  -- JSON array of IDs of context-only transactions linked to this bank transaction
+  linked_order_ids TEXT DEFAULT '[]',  -- JSON array of IDs of context-only transactions linked to this bank transaction
+
+  -- Platform detection
+  detected_platform TEXT CHECK(detected_platform IS NULL OR detected_platform IN ('amazon', 'paypal'))
 );
 
 -- Categories table
@@ -259,6 +271,8 @@ export interface StoredTransaction {
   // Context/Order linking fields
   isContextOnly?: boolean;     // True for items that provide context but aren't real bank transactions
   linkedOrderIds?: string[];   // IDs of context-only transactions (orders) linked to this bank transaction
+  // Platform detection
+  detectedPlatform?: 'amazon' | 'paypal' | null;  // Auto-detected payment platform
 }
 
 export function getAllTransactions(): StoredTransaction[] {
@@ -291,12 +305,12 @@ export function insertTransaction(tx: Omit<StoredTransaction, 'timestamp'>): voi
       source_connector_type, source_external_id, source_imported_at,
       match_id, match_is_primary, match_pattern_type, match_source,
       match_confidence, match_linked_ids, transaction_type, exclude_from_stats,
-      is_context_only, linked_order_ids
+      is_context_only, linked_order_ids, detected_platform
     ) VALUES (
       ?, ?, ?, ?, ?, ?, ?,
       ?, ?, ?,
       ?, ?, ?, ?, ?, ?, ?, ?,
-      ?, ?
+      ?, ?, ?
     )
   `);
 
@@ -320,7 +334,8 @@ export function insertTransaction(tx: Omit<StoredTransaction, 'timestamp'>): voi
     tx.transactionType || null,
     tx.excludeFromStats ? 1 : 0,
     tx.isContextOnly ? 1 : 0,
-    tx.linkedOrderIds ? JSON.stringify(tx.linkedOrderIds) : '[]'
+    tx.linkedOrderIds ? JSON.stringify(tx.linkedOrderIds) : '[]',
+    tx.detectedPlatform || null
   );
 }
 
@@ -331,7 +346,7 @@ export function updateTransaction(tx: StoredTransaction): void {
       source_connector_type = ?, source_external_id = ?, source_imported_at = ?,
       match_id = ?, match_is_primary = ?, match_pattern_type = ?, match_source = ?,
       match_confidence = ?, match_linked_ids = ?, transaction_type = ?, exclude_from_stats = ?,
-      is_context_only = ?, linked_order_ids = ?,
+      is_context_only = ?, linked_order_ids = ?, detected_platform = ?,
       timestamp = ?
     WHERE id = ?
   `);
@@ -355,6 +370,7 @@ export function updateTransaction(tx: StoredTransaction): void {
     tx.excludeFromStats ? 1 : 0,
     tx.isContextOnly ? 1 : 0,
     tx.linkedOrderIds ? JSON.stringify(tx.linkedOrderIds) : '[]',
+    tx.detectedPlatform || null,
     new Date().toISOString(),
     tx.id
   );
@@ -455,6 +471,11 @@ function rowToTransaction(row: any): StoredTransaction {
     } catch {
       tx.linkedOrderIds = [];
     }
+  }
+
+  // Platform detection
+  if (row.detected_platform) {
+    tx.detectedPlatform = row.detected_platform;
   }
 
   return tx;
