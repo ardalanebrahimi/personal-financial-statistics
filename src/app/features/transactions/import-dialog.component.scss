@@ -1,0 +1,157 @@
+.import-dialog {
+  min-width: 600px;
+}
+
+.dialog-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 24px 0;
+
+  h2 {
+    margin: 0;
+  }
+}
+
+.close-button {
+  margin: -8px -8px 0 0;
+}
+
+mat-dialog-content {
+  padding: 0 24px;
+  max-height: 65vh;
+}
+
+.tab-content {
+  padding: 16px 0;
+}
+
+mat-tab-group ::ng-deep .mat-mdc-tab .mdc-tab__text-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.format-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 13px;
+  color: #666;
+
+  mat-icon {
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+    color: #1976d2;
+  }
+}
+
+.instructions-panel {
+  margin-bottom: 16px;
+
+  mat-icon {
+    margin-right: 8px;
+  }
+}
+
+.instructions {
+  ol {
+    padding-left: 20px;
+    line-height: 1.8;
+    margin: 0;
+  }
+
+  code {
+    background: #f5f5f5;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 12px;
+  }
+
+  .hint {
+    margin-top: 12px;
+    font-size: 13px;
+    color: #666;
+    font-style: italic;
+  }
+}
+
+.date-filter {
+  display: flex;
+  gap: 16px;
+  margin-top: 16px;
+
+  mat-form-field {
+    flex: 1;
+  }
+}
+
+.progress-section {
+  margin: 16px 0;
+  text-align: center;
+
+  p {
+    margin-top: 12px;
+    color: #666;
+  }
+}
+
+mat-dialog-actions {
+  padding: 16px 24px;
+}
+
+/* Amazon sections layout */
+.amazon-content {
+  padding: 8px 0;
+}
+
+.amazon-sections {
+  display: flex;
+  gap: 16px;
+}
+
+.amazon-section {
+  flex: 1;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fafafa;
+
+  h3 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 12px 0;
+    font-size: 14px;
+    font-weight: 500;
+    color: #333;
+
+    mat-icon {
+      font-size: 20px;
+      width: 20px;
+      height: 20px;
+      color: #ff9800;
+    }
+  }
+
+  .date-filter {
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 8px;
+
+    mat-form-field {
+      width: 100%;
+    }
+  }
+
+  .progress-section {
+    margin: 12px 0;
+
+    p {
+      font-size: 12px;
+    }
+  }
+}

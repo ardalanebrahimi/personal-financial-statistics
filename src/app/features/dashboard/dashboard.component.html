@@ -1,0 +1,110 @@
+<div class="dashboard-container">
+  <!-- Header with Sync All -->
+  <header class="dashboard-header">
+    <div class="header-content">
+      <h1>Financial Dashboard</h1>
+      <p>Overview of your financial accounts and transactions</p>
+    </div>
+    <div class="header-actions">
+      <button mat-raised-button color="primary"
+              [disabled]="isSyncing"
+              (click)="syncAll()">
+        <mat-icon *ngIf="!isSyncing">sync</mat-icon>
+        <mat-spinner *ngIf="isSyncing" diameter="20"></mat-spinner>
+        {{ isSyncing ? 'Syncing...' : 'Sync All' }}
+      </button>
+    </div>
+  </header>
+
+  <!-- Sync Progress -->
+  <app-sync-progress
+    [syncProgress]="syncProgress"
+    [isSyncing]="isSyncing">
+  </app-sync-progress>
+
+  <!-- Stats Overview -->
+  <app-stats-overview [stats]="stats"></app-stats-overview>
+
+  <!-- Tab Group -->
+  <mat-tab-group [selectedIndex]="selectedTabIndex" (selectedIndexChange)="onTabChange($event)">
+    <!-- Overview Tab -->
+    <mat-tab label="Overview">
+      <ng-template matTabContent>
+        <div class="tab-content">
+          <div class="content-grid">
+            <app-connected-accounts [connectors]="connectors"></app-connected-accounts>
+            <app-pending-items
+              [uncategorizedCount]="stats.uncategorizedCount"
+              [unmatchedCount]="stats.unmatchedCount"
+              [isAutoCategorizing]="isAutoCategorizing"
+              (autoCategorize)="autoCategorizePending()">
+            </app-pending-items>
+            <app-top-categories
+              [categories]="stats.topCategories"
+              (viewCharts)="selectedTabIndex = 1">
+            </app-top-categories>
+            <app-recent-transactions [transactions]="recentTransactions"></app-recent-transactions>
+          </div>
+          <app-quick-actions (exportData)="exportData()"></app-quick-actions>
+        </div>
+      </ng-template>
+    </mat-tab>
+
+    <!-- Charts Tab -->
+    <mat-tab label="Charts">
+      <ng-template matTabContent>
+        <div class="tab-content charts-tab">
+          <app-chart-controls
+            [startDate]="chartStartDate"
+            [endDate]="chartEndDate"
+            [chartType]="selectedChartType"
+            (startDateChange)="chartStartDate = $event; loadChartData()"
+            (endDateChange)="chartEndDate = $event; loadChartData()"
+            (chartTypeChange)="selectedChartType = $event; updateChart()"
+            (presetSelected)="setDatePreset($event)">
+          </app-chart-controls>
+
+          <!-- Chart Card -->
+          <mat-card class="chart-card" *ngIf="chartData">
+            <mat-card-header>
+              <mat-icon mat-card-avatar>{{ selectedChartType === 'pie' ? 'pie_chart' : 'bar_chart' }}</mat-icon>
+              <mat-card-title>Spending by Category</mat-card-title>
+              <mat-card-subtitle>{{ chartStartDate | date:'mediumDate' }} - {{ chartEndDate | date:'mediumDate' }}</mat-card-subtitle>
+            </mat-card-header>
+            <mat-card-content>
+              <div class="chart-container">
+                <canvas baseChart
+                  [type]="selectedChartType"
+                  [datasets]="chartData.datasets"
+                  [labels]="chartData.labels"
+                  [options]="chartService.pieChartOptions">
+                </canvas>
+              </div>
+            </mat-card-content>
+          </mat-card>
+
+          <!-- Monthly Trend Card -->
+          <mat-card class="chart-card" *ngIf="monthlyTrendData">
+            <mat-card-header>
+              <mat-icon mat-card-avatar>show_chart</mat-icon>
+              <mat-card-title>Monthly Spending Trend</mat-card-title>
+              <mat-card-subtitle>Expense trends over time</mat-card-subtitle>
+            </mat-card-header>
+            <mat-card-content>
+              <div class="chart-container">
+                <canvas baseChart
+                  type="line"
+                  [datasets]="monthlyTrendData.datasets"
+                  [labels]="monthlyTrendData.labels"
+                  [options]="chartService.lineChartOptions">
+                </canvas>
+              </div>
+            </mat-card-content>
+          </mat-card>
+
+          <app-category-breakdown [breakdown]="categoryBreakdown"></app-category-breakdown>
+        </div>
+      </ng-template>
+    </mat-tab>
+  </mat-tab-group>
+</div>

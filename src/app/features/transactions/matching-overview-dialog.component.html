@@ -1,0 +1,160 @@
+<div class="matching-overview-dialog">
+  <!-- Header -->
+  <div class="dialog-header">
+    <div class="header-left">
+      <mat-icon>link</mat-icon>
+      <h2>Matching Overview</h2>
+    </div>
+    <mat-button-toggle-group [(ngModel)]="selectedPlatform" (change)="onPlatformChange()">
+      <mat-button-toggle value="amazon">
+        <mat-icon class="amazon-icon">shopping_cart</mat-icon>
+        Amazon
+        <span class="badge" *ngIf="data?.amazon">{{ data!.amazon.stats.unlinkedBankCharges }}</span>
+      </mat-button-toggle>
+      <mat-button-toggle value="paypal">
+        <mat-icon class="paypal-icon">account_balance_wallet</mat-icon>
+        PayPal
+        <span class="badge" *ngIf="data?.paypal">{{ data!.paypal.stats.unlinkedBankCharges }}</span>
+      </mat-button-toggle>
+    </mat-button-toggle-group>
+    <button mat-icon-button (click)="close()">
+      <mat-icon>close</mat-icon>
+    </button>
+  </div>
+
+  <mat-dialog-content>
+    <!-- Loading state -->
+    <div class="loading-state" *ngIf="isLoading">
+      <mat-spinner diameter="40"></mat-spinner>
+      <span>Loading matching data...</span>
+    </div>
+
+    <ng-container *ngIf="!isLoading && data">
+      <!-- Stats Bar -->
+      <app-matching-stats-bar
+        [stats]="matchingService.getStats(data, selectedPlatform)"
+        [platform]="selectedPlatform"
+        [unlinkedContextCount]="getUnlinkedContextCount()"
+        [suggestionCount]="matchingService.getSuggestions(data, selectedPlatform).length">
+      </app-matching-stats-bar>
+
+      <!-- Two-Panel Layout -->
+      <div class="matching-panels">
+        <!-- Left Panel: Bank Transactions -->
+        <div class="panel bank-panel">
+          <div class="panel-header">
+            <h3>
+              <mat-icon>account_balance</mat-icon>
+              Bank Transactions
+            </h3>
+            <mat-checkbox
+              *ngIf="getBatchSelectableBankTxs().length > 0"
+              [checked]="allSuggestionsSelected()"
+              [indeterminate]="someSuggestionsSelected()"
+              (change)="toggleAllSuggestions($event.checked)"
+              matTooltip="Select all with suggestions">
+              All
+            </mat-checkbox>
+          </div>
+          <p class="panel-hint">Select a bank charge to match, or check multiple with suggestions for batch linking</p>
+
+          <div class="transaction-list" *ngIf="getBankUnlinked().length > 0">
+            <app-matching-tx-item
+              *ngFor="let tx of getBankUnlinked()"
+              [transaction]="tx"
+              [isSelected]="selectedBankTx?.id === tx.id"
+              [isChecked]="batchSelectedBankIds.has(tx.id)"
+              [hasSuggestion]="matchingService.hasSuggestionFor(data, selectedPlatform, tx.id)"
+              [isBatchSelected]="batchSelectedBankIds.has(tx.id)"
+              [showCheckbox]="matchingService.hasSuggestionFor(data, selectedPlatform, tx.id)"
+              (itemClick)="selectBankTx(tx)"
+              (checkboxChange)="toggleBatchSelect(tx.id, $event)">
+            </app-matching-tx-item>
+          </div>
+
+          <div class="empty-state" *ngIf="getBankUnlinked().length === 0">
+            <mat-icon>check_circle</mat-icon>
+            <span>All matched!</span>
+          </div>
+        </div>
+
+        <!-- Center: Link indicator -->
+        <app-matching-link-summary
+          [selectedBankTx]="selectedBankTx"
+          [selectedTotal]="getSelectedTotal()"
+          [selectedCount]="selectedContextTxIds.size"
+          [isMatch]="isAmountMatch()"
+          [isCloseMatch]="isCloseMatch()"
+          [difference]="getDifference()">
+        </app-matching-link-summary>
+
+        <!-- Right Panel: Context Transactions -->
+        <div class="panel context-panel">
+          <h3>
+            <mat-icon *ngIf="selectedPlatform === 'amazon'">shopping_cart</mat-icon>
+            <mat-icon *ngIf="selectedPlatform === 'paypal'">account_balance_wallet</mat-icon>
+            {{ selectedPlatform === 'amazon' ? 'Amazon Orders' : 'PayPal Transactions' }}
+          </h3>
+          <p class="panel-hint">Select items to link</p>
+
+          <!-- Date Range Slider -->
+          <div class="date-range-control" *ngIf="selectedBankTx && !matchingService.hasSuggestionFor(data, selectedPlatform, selectedBankTx.id)">
+            <div class="date-range-label">
+              <mat-icon>date_range</mat-icon>
+              <span>Search range: {{ dateRangeDays }} days</span>
+            </div>
+            <mat-slider min="7" max="60" step="1" discrete [displayWith]="formatDays">
+              <input matSliderThumb [(ngModel)]="dateRangeDays">
+            </mat-slider>
+            <span class="date-range-hint">Increase to find matches further away</span>
+          </div>
+
+          <div class="transaction-list" *ngIf="getContextUnlinked().length > 0">
+            <app-matching-tx-item
+              *ngFor="let tx of getFilteredContextTx()"
+              [id]="'context-tx-' + tx.id"
+              [transaction]="tx"
+              [isSelected]="selectedContextTxIds.has(tx.id)"
+              [isChecked]="selectedContextTxIds.has(tx.id)"
+              [isSuggested]="isSuggestedFor(tx.id)"
+              [showCheckbox]="true"
+              [showCheckboxOnly]="true"
+              (itemClick)="toggleContextTx(tx)"
+              (checkboxChange)="toggleContextTx(tx)">
+            </app-matching-tx-item>
+          </div>
+
+          <div class="empty-state" *ngIf="getContextUnlinked().length === 0">
+            <mat-icon>info</mat-icon>
+            <span>No unlinked {{ selectedPlatform === 'amazon' ? 'orders' : 'transactions' }}</span>
+            <p class="hint">Import {{ selectedPlatform === 'amazon' ? 'Amazon orders' : 'PayPal transactions' }} to match</p>
+          </div>
+        </div>
+      </div>
+    </ng-container>
+  </mat-dialog-content>
+
+  <mat-dialog-actions>
+    <button mat-button (click)="close()">Close</button>
+    <div class="spacer"></div>
+    <button mat-stroked-button
+            (click)="autoMatchAll()"
+            [disabled]="!hasHighConfidenceSuggestions()">
+      <mat-icon>auto_fix_high</mat-icon>
+      Auto-Match All ({{ getHighConfidenceSuggestionCount() }})
+    </button>
+    <button mat-stroked-button
+            color="accent"
+            (click)="linkBatchSelected()"
+            [disabled]="batchSelectedBankIds.size === 0">
+      <mat-icon>playlist_add_check</mat-icon>
+      Link Selected ({{ batchSelectedBankIds.size }})
+    </button>
+    <button mat-raised-button color="primary"
+            [disabled]="!canLink()"
+            (click)="linkSelected()">
+      <mat-icon>link</mat-icon>
+      Link Manual
+    </button>
+  </mat-dialog-actions>
+</div>

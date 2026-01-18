@@ -1,0 +1,139 @@
+<div class="year-over-year-container">
+  <!-- Summary Cards -->
+  <div class="summary-cards">
+    <mat-card class="summary-card">
+      <mat-card-content>
+        <mat-icon>calendar_month</mat-icon>
+        <div class="summary-info">
+          <span class="summary-label">Years Compared</span>
+          <span class="summary-value">{{ years.length }}</span>
+        </div>
+      </mat-card-content>
+    </mat-card>
+
+    <mat-card class="summary-card">
+      <mat-card-content>
+        <mat-icon [class.positive]="yoyChange < 0" [class.negative]="yoyChange > 0">
+          {{ yoyChange <= 0 ? 'trending_down' : 'trending_up' }}
+        </mat-icon>
+        <div class="summary-info">
+          <span class="summary-label">YoY Change</span>
+          <span class="summary-value" [class.positive]="yoyChange < 0" [class.negative]="yoyChange > 0">
+            {{ yoyChange > 0 ? '+' : '' }}{{ yoyChange | number:'1.1-1' }}%
+          </span>
+        </div>
+      </mat-card-content>
+    </mat-card>
+
+    <mat-card class="summary-card">
+      <mat-card-content>
+        <mat-icon>local_fire_department</mat-icon>
+        <div class="summary-info">
+          <span class="summary-label">Highest Spending Month</span>
+          <span class="summary-value">{{ highestMonth }}</span>
+        </div>
+      </mat-card-content>
+    </mat-card>
+
+    <mat-card class="summary-card">
+      <mat-card-content>
+        <mat-icon>ac_unit</mat-icon>
+        <div class="summary-info">
+          <span class="summary-label">Lowest Spending Month</span>
+          <span class="summary-value">{{ lowestMonth }}</span>
+        </div>
+      </mat-card-content>
+    </mat-card>
+  </div>
+
+  <!-- Year Legend -->
+  <mat-card class="legend-card" *ngIf="years.length > 0">
+    <mat-card-content>
+      <div class="year-legend">
+        <span class="legend-label">Years:</span>
+        <mat-chip-set>
+          <mat-chip *ngFor="let year of years; let i = index"
+                   [style.background-color]="yearColors[i] + '30'"
+                   [style.border-color]="yearColors[i]">
+            {{ year }}
+          </mat-chip>
+        </mat-chip-set>
+      </div>
+    </mat-card-content>
+  </mat-card>
+
+  <!-- Chart -->
+  <mat-card class="chart-card">
+    <mat-card-header>
+      <mat-icon mat-card-avatar>compare</mat-icon>
+      <mat-card-title>Year-over-Year Comparison</mat-card-title>
+      <mat-card-subtitle>Compare spending for the same month across different years</mat-card-subtitle>
+    </mat-card-header>
+    <mat-card-content>
+      <div class="chart-container" *ngIf="!loading && chartData">
+        <canvas baseChart
+          type="bar"
+          [data]="chartData"
+          [options]="chartOptions">
+        </canvas>
+      </div>
+      <div class="loading-container" *ngIf="loading">
+        <mat-spinner diameter="40"></mat-spinner>
+        <span>Loading data...</span>
+      </div>
+      <div class="empty-state" *ngIf="!loading && yoyData.length === 0">
+        <mat-icon>info</mat-icon>
+        <p>No year-over-year data available</p>
+        <span class="empty-hint">You need at least 2 years of data for comparison</span>
+      </div>
+    </mat-card-content>
+  </mat-card>
+
+  <!-- Detailed Table -->
+  <mat-card class="table-card" *ngIf="yoyData.length > 0">
+    <mat-card-header>
+      <mat-icon mat-card-avatar>table_chart</mat-icon>
+      <mat-card-title>Monthly Breakdown by Year</mat-card-title>
+    </mat-card-header>
+    <mat-card-content>
+      <div class="data-table">
+        <div class="table-header">
+          <span class="col-month">Month</span>
+          <span *ngFor="let year of years" class="col-year">{{ year }}</span>
+          <span class="col-change" *ngIf="years.length >= 2">Change</span>
+        </div>
+        <div *ngFor="let row of yoyData" class="table-row">
+          <span class="col-month">{{ row.monthLabel }}</span>
+          <span *ngFor="let yearData of row.years" class="col-year">
+            {{ yearData.amount > 0 ? (yearData.amount | currency:'EUR') : '-' }}
+          </span>
+          <span class="col-change" *ngIf="years.length >= 2"
+                [class.positive]="(getChange(row) ?? 0) < 0"
+                [class.negative]="(getChange(row) ?? 0) > 0">
+            {{ getChange(row) !== null ? (((getChange(row) ?? 0) > 0 ? '+' : '') + (getChange(row) | number:'1.0-0') + '%') : '-' }}
+          </span>
+        </div>
+      </div>
+    </mat-card-content>
+  </mat-card>
+
+  <!-- Seasonal Patterns -->
+  <mat-card class="patterns-card" *ngIf="yoyData.length > 0">
+    <mat-card-header>
+      <mat-icon mat-card-avatar>wb_sunny</mat-icon>
+      <mat-card-title>Seasonal Patterns</mat-card-title>
+    </mat-card-header>
+    <mat-card-content>
+      <div class="patterns-grid">
+        <div class="pattern" *ngFor="let pattern of seasonalPatterns">
+          <mat-icon [style.color]="pattern.color">{{ pattern.icon }}</mat-icon>
+          <div>
+            <span class="pattern-label">{{ pattern.season }}</span>
+            <span class="pattern-value">{{ pattern.avgSpending | currency:'EUR' }}</span>
+            <span class="pattern-hint">{{ pattern.months }}</span>
+          </div>
+        </div>
+      </div>
+    </mat-card-content>
+  </mat-card>
+</div>

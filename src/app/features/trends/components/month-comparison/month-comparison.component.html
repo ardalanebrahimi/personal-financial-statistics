@@ -1,0 +1,147 @@
+<div class="month-comparison-container">
+  <!-- Month Selector -->
+  <mat-card class="controls-card">
+    <mat-card-content>
+      <div class="controls-row">
+        <mat-form-field appearance="outline">
+          <mat-label>Compare Month</mat-label>
+          <mat-select [(ngModel)]="selectedMonth" (selectionChange)="loadData()">
+            <mat-option *ngFor="let month of availableMonths" [value]="month.value">
+              {{ month.label }}
+            </mat-option>
+          </mat-select>
+        </mat-form-field>
+
+        <div class="comparison-info" *ngIf="thisMonthLabel && lastMonthLabel">
+          <mat-icon>compare_arrows</mat-icon>
+          <span>{{ thisMonthLabel }} vs {{ lastMonthLabel }}</span>
+        </div>
+      </div>
+    </mat-card-content>
+  </mat-card>
+
+  <!-- Summary Cards -->
+  <div class="summary-cards" *ngIf="!loading && comparisons.length > 0">
+    <mat-card class="summary-card">
+      <mat-card-content>
+        <mat-icon [class.positive]="totalChange < 0" [class.negative]="totalChange > 0">
+          {{ totalChange <= 0 ? 'trending_down' : 'trending_up' }}
+        </mat-icon>
+        <div class="summary-info">
+          <span class="summary-label">Total Change</span>
+          <span class="summary-value" [class.positive]="totalChange < 0" [class.negative]="totalChange > 0">
+            {{ totalChange > 0 ? '+' : '' }}{{ totalChange | currency:'EUR' }}
+          </span>
+        </div>
+      </mat-card-content>
+    </mat-card>
+
+    <mat-card class="summary-card">
+      <mat-card-content>
+        <mat-icon>pie_chart</mat-icon>
+        <div class="summary-info">
+          <span class="summary-label">% Change</span>
+          <span class="summary-value" [class.positive]="totalPercentChange !== null && totalPercentChange < 0"
+                [class.negative]="totalPercentChange !== null && totalPercentChange > 0">
+            {{ totalPercentChange !== null ? (totalPercentChange > 0 ? '+' : '') + (totalPercentChange | number:'1.1-1') + '%' : 'N/A' }}
+          </span>
+        </div>
+      </mat-card-content>
+    </mat-card>
+
+    <mat-card class="summary-card">
+      <mat-card-content>
+        <mat-icon class="up">arrow_upward</mat-icon>
+        <div class="summary-info">
+          <span class="summary-label">Categories Up</span>
+          <span class="summary-value negative">{{ categoriesUp }}</span>
+        </div>
+      </mat-card-content>
+    </mat-card>
+
+    <mat-card class="summary-card">
+      <mat-card-content>
+        <mat-icon class="down">arrow_downward</mat-icon>
+        <div class="summary-info">
+          <span class="summary-label">Categories Down</span>
+          <span class="summary-value positive">{{ categoriesDown }}</span>
+        </div>
+      </mat-card-content>
+    </mat-card>
+  </div>
+
+  <!-- Comparison Table -->
+  <mat-card class="comparison-card">
+    <mat-card-header>
+      <mat-icon mat-card-avatar>compare_arrows</mat-icon>
+      <mat-card-title>Month-over-Month Comparison</mat-card-title>
+      <mat-card-subtitle *ngIf="thisMonthLabel && lastMonthLabel">
+        {{ thisMonthLabel }} compared to {{ lastMonthLabel }}
+      </mat-card-subtitle>
+    </mat-card-header>
+    <mat-card-content>
+      <div class="loading-container" *ngIf="loading">
+        <mat-spinner diameter="40"></mat-spinner>
+        <span>Loading data...</span>
+      </div>
+
+      <div class="empty-state" *ngIf="!loading && comparisons.length === 0">
+        <mat-icon>info</mat-icon>
+        <p>No comparison data available</p>
+      </div>
+
+      <div class="comparison-table" *ngIf="!loading && comparisons.length > 0">
+        <div class="table-header">
+          <span class="col-category">Category</span>
+          <span class="col-this-month">{{ thisMonthLabel }}</span>
+          <span class="col-last-month">{{ lastMonthLabel }}</span>
+          <span class="col-change clickable" (click)="sortBy('change')">
+            Change
+            <mat-icon *ngIf="sortColumn === 'change'">{{ sortDirection === 'asc' ? 'arrow_upward' : 'arrow_downward' }}</mat-icon>
+          </span>
+          <span class="col-percent clickable" (click)="sortBy('percent')">
+            %
+            <mat-icon *ngIf="sortColumn === 'percent'">{{ sortDirection === 'asc' ? 'arrow_upward' : 'arrow_downward' }}</mat-icon>
+          </span>
+          <span class="col-indicator"></span>
+        </div>
+
+        <div *ngFor="let row of sortedComparisons" class="table-row">
+          <span class="col-category">
+            <span class="color-dot" [style.background-color]="row.color"></span>
+            {{ row.category }}
+          </span>
+          <span class="col-this-month">{{ row.thisMonth | currency:'EUR' }}</span>
+          <span class="col-last-month">{{ row.lastMonth | currency:'EUR' }}</span>
+          <span class="col-change" [class.positive]="row.change < 0" [class.negative]="row.change > 0">
+            {{ row.change > 0 ? '+' : '' }}{{ row.change | currency:'EUR' }}
+          </span>
+          <span class="col-percent" [class.positive]="row.percentChange !== null && row.percentChange < 0"
+                [class.negative]="row.percentChange !== null && row.percentChange > 0">
+            {{ row.percentChange !== null ? (row.percentChange > 0 ? '+' : '') + (row.percentChange | number:'1.1-1') + '%' : 'New' }}
+          </span>
+          <span class="col-indicator">
+            <mat-icon *ngIf="row.change > 0" class="indicator-up">arrow_upward</mat-icon>
+            <mat-icon *ngIf="row.change < 0" class="indicator-down">arrow_downward</mat-icon>
+            <mat-icon *ngIf="row.change === 0" class="indicator-same">remove</mat-icon>
+          </span>
+        </div>
+
+        <!-- Totals Row -->
+        <div class="table-row totals-row">
+          <span class="col-category"><strong>TOTAL</strong></span>
+          <span class="col-this-month"><strong>{{ totalThisMonth | currency:'EUR' }}</strong></span>
+          <span class="col-last-month"><strong>{{ totalLastMonth | currency:'EUR' }}</strong></span>
+          <span class="col-change" [class.positive]="totalChange < 0" [class.negative]="totalChange > 0">
+            <strong>{{ totalChange > 0 ? '+' : '' }}{{ totalChange | currency:'EUR' }}</strong>
+          </span>
+          <span class="col-percent" [class.positive]="totalPercentChange !== null && totalPercentChange < 0"
+                [class.negative]="totalPercentChange !== null && totalPercentChange > 0">
+            <strong>{{ totalPercentChange !== null ? (totalPercentChange > 0 ? '+' : '') + (totalPercentChange | number:'1.1-1') + '%' : 'N/A' }}</strong>
+          </span>
+          <span class="col-indicator"></span>
+        </div>
+      </div>
+    </mat-card-content>
+  </mat-card>
+</div>

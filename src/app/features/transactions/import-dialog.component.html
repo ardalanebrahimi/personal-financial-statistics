@@ -1,0 +1,189 @@
+<div class="import-dialog">
+  <div class="dialog-header">
+    <h2 mat-dialog-title>Import Transactions</h2>
+    <button mat-icon-button (click)="close()" class="close-button">
+      <mat-icon>close</mat-icon>
+    </button>
+  </div>
+
+  <mat-dialog-content>
+    <mat-tab-group [(selectedIndex)]="selectedTab" animationDuration="200ms">
+      <!-- CSV Import Tab -->
+      <mat-tab>
+        <ng-template mat-tab-label>
+          <mat-icon>description</mat-icon>
+          <span>Bank Statement (CSV)</span>
+        </ng-template>
+
+        <div class="tab-content">
+          <input type="file" #csvInput hidden accept=".csv" (change)="onFileSelected($event, 'csv')">
+          <app-import-drop-zone
+            [file]="csvFile"
+            placeholder="Drop your bank statement CSV file here or click to browse"
+            [acceptedExtensions]="['.csv']"
+            (fileInputClick)="csvInput.click()"
+            (fileSelected)="setFile($event, 'csv')">
+          </app-import-drop-zone>
+
+          <div class="format-hint">
+            <mat-icon>info</mat-icon>
+            <span>Supported formats: Sparkasse, N26, generic CSV with semicolon delimiter</span>
+          </div>
+
+          <div class="progress-section" *ngIf="csvImporting">
+            <mat-progress-bar mode="indeterminate"></mat-progress-bar>
+            <p>Importing transactions...</p>
+          </div>
+
+          <app-import-result [result]="csvResult"></app-import-result>
+        </div>
+      </mat-tab>
+
+      <!-- Amazon Import Tab -->
+      <mat-tab>
+        <ng-template mat-tab-label>
+          <mat-icon>shopping_cart</mat-icon>
+          <span>Amazon</span>
+        </ng-template>
+
+        <div class="tab-content amazon-content">
+          <mat-expansion-panel class="instructions-panel">
+            <mat-expansion-panel-header>
+              <mat-panel-title>
+                <mat-icon>help_outline</mat-icon>
+                How to get your Amazon data
+              </mat-panel-title>
+            </mat-expansion-panel-header>
+            <div class="instructions">
+              <ol>
+                <li>Go to <a href="https://www.amazon.com/gp/privacycentral/dsar/preview.html" target="_blank">Amazon Privacy Central</a></li>
+                <li>Sign in and click "Request My Data"</li>
+                <li>Select "Your Orders" and wait for the email</li>
+                <li>Orders: <code>Retail.OrderHistory.1/Retail.OrderHistory.csv</code></li>
+                <li>Returns: <code>Retail.CustomerReturns.X/Retail.CustomerReturns.csv</code></li>
+              </ol>
+            </div>
+          </mat-expansion-panel>
+
+          <div class="amazon-sections">
+            <!-- Orders Section -->
+            <div class="amazon-section">
+              <h3><mat-icon>shopping_cart</mat-icon> Orders</h3>
+              <input type="file" #amazonInput hidden accept=".csv" (change)="onFileSelected($event, 'amazon')">
+              <app-import-drop-zone
+                [file]="amazonFile"
+                placeholder="Drop Retail.OrderHistory.csv here"
+                [acceptedExtensions]="['.csv']"
+                [small]="true"
+                (fileInputClick)="amazonInput.click()"
+                (fileSelected)="setFile($event, 'amazon')">
+              </app-import-drop-zone>
+
+              <div class="date-filter" *ngIf="amazonFile">
+                <mat-form-field appearance="outline">
+                  <mat-label>Start Date</mat-label>
+                  <input matInput [matDatepicker]="startPicker" [(ngModel)]="amazonStartDate">
+                  <mat-datepicker-toggle matSuffix [for]="startPicker"></mat-datepicker-toggle>
+                  <mat-datepicker #startPicker></mat-datepicker>
+                </mat-form-field>
+                <mat-form-field appearance="outline">
+                  <mat-label>End Date</mat-label>
+                  <input matInput [matDatepicker]="endPicker" [(ngModel)]="amazonEndDate">
+                  <mat-datepicker-toggle matSuffix [for]="endPicker"></mat-datepicker-toggle>
+                  <mat-datepicker #endPicker></mat-datepicker>
+                </mat-form-field>
+              </div>
+
+              <div class="progress-section" *ngIf="amazonImporting">
+                <mat-progress-bar mode="indeterminate"></mat-progress-bar>
+                <p>Importing orders...</p>
+              </div>
+
+              <app-import-result [result]="amazonResult" [compact]="true"></app-import-result>
+            </div>
+
+            <!-- Returns Section -->
+            <div class="amazon-section">
+              <h3><mat-icon>currency_exchange</mat-icon> Returns</h3>
+              <input type="file" #amazonRefundsInput hidden accept=".csv" (change)="onFileSelected($event, 'amazonRefunds')">
+              <app-import-drop-zone
+                [file]="amazonRefundsFile"
+                placeholder="Drop Retail.CustomerReturns.csv here"
+                [acceptedExtensions]="['.csv']"
+                [small]="true"
+                (fileInputClick)="amazonRefundsInput.click()"
+                (fileSelected)="setFile($event, 'amazonRefunds')">
+              </app-import-drop-zone>
+
+              <div class="progress-section" *ngIf="amazonRefundsImporting">
+                <mat-progress-bar mode="indeterminate"></mat-progress-bar>
+                <p>Importing returns...</p>
+              </div>
+
+              <app-import-result [result]="amazonRefundsResult" [compact]="true"></app-import-result>
+            </div>
+          </div>
+        </div>
+      </mat-tab>
+
+      <!-- PayPal Import Tab -->
+      <mat-tab>
+        <ng-template mat-tab-label>
+          <mat-icon>account_balance_wallet</mat-icon>
+          <span>PayPal</span>
+        </ng-template>
+
+        <div class="tab-content">
+          <mat-expansion-panel class="instructions-panel">
+            <mat-expansion-panel-header>
+              <mat-panel-title>
+                <mat-icon>help_outline</mat-icon>
+                How to export PayPal transactions
+              </mat-panel-title>
+            </mat-expansion-panel-header>
+            <div class="instructions">
+              <ol>
+                <li>Open the PayPal app on your phone</li>
+                <li>Go to Activity / Transactions</li>
+                <li>Select all transactions and copy them</li>
+                <li>Paste into a text file and save as .txt</li>
+              </ol>
+              <p class="hint">Note: PayPal transactions are stored as context data and matched to bank "PayPal" entries.</p>
+            </div>
+          </mat-expansion-panel>
+
+          <input type="file" #paypalInput hidden accept=".txt,.csv" (change)="onFileSelected($event, 'paypal')">
+          <app-import-drop-zone
+            [file]="paypalFile"
+            placeholder="Drop your PayPal text file here or click to browse"
+            [acceptedExtensions]="['.txt', '.csv']"
+            (fileInputClick)="paypalInput.click()"
+            (fileSelected)="setFile($event, 'paypal')">
+          </app-import-drop-zone>
+
+          <div class="format-hint">
+            <mat-icon>info</mat-icon>
+            <span>Supports PayPal app text export format (.txt)</span>
+          </div>
+
+          <div class="progress-section" *ngIf="paypalImporting">
+            <mat-progress-bar mode="indeterminate"></mat-progress-bar>
+            <p>Importing PayPal transactions...</p>
+          </div>
+
+          <app-import-result [result]="paypalResult" [showRecurring]="true"></app-import-result>
+        </div>
+      </mat-tab>
+    </mat-tab-group>
+  </mat-dialog-content>
+
+  <mat-dialog-actions align="end">
+    <button mat-button (click)="clearCurrentFile()">Clear</button>
+    <button mat-raised-button color="primary"
+            [disabled]="!canImport || isImporting"
+            (click)="import()">
+      <mat-icon>upload</mat-icon>
+      Import
+    </button>
+  </mat-dialog-actions>
+</div>

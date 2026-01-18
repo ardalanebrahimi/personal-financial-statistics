@@ -1,0 +1,180 @@
+.year-over-year-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.summary-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+}
+
+.summary-card mat-card-content {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem !important;
+}
+
+.summary-card mat-icon {
+  font-size: 32px;
+  width: 32px;
+  height: 32px;
+  color: #1976d2;
+
+  &.positive { color: #4caf50; }
+  &.negative { color: #f44336; }
+}
+
+.summary-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.summary-label {
+  font-size: 12px;
+  color: #666;
+  text-transform: uppercase;
+}
+
+.summary-value {
+  font-size: 1.25rem;
+  font-weight: 500;
+}
+
+.positive { color: #4caf50; }
+.negative { color: #f44336; }
+
+.legend-card mat-card-content {
+  padding: 1rem !important;
+}
+
+.year-legend {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.legend-label {
+  font-weight: 500;
+  color: #666;
+}
+
+.chart-card,
+.table-card,
+.patterns-card {
+  width: 100%;
+}
+
+.chart-container {
+  position: relative;
+  min-height: 350px;
+  padding: 1rem;
+}
+
+.loading-container,
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  gap: 1rem;
+  color: #666;
+}
+
+.empty-state mat-icon {
+  font-size: 48px;
+  width: 48px;
+  height: 48px;
+}
+
+.empty-hint {
+  font-size: 13px;
+  color: #999;
+}
+
+.data-table {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.table-header {
+  display: flex;
+  padding: 0.75rem 0;
+  border-bottom: 2px solid #e0e0e0;
+  font-weight: 500;
+  color: #666;
+  min-width: 500px;
+}
+
+.table-row {
+  display: flex;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid #f0f0f0;
+  min-width: 500px;
+
+  &:hover {
+    background: #fafafa;
+  }
+}
+
+.col-month {
+  flex: 1;
+  font-weight: 500;
+}
+
+.col-year {
+  flex: 1;
+  text-align: right;
+}
+
+.col-change {
+  flex: 0.8;
+  text-align: right;
+  font-weight: 500;
+}
+
+.patterns-card mat-card-content {
+  padding: 1rem !important;
+}
+
+.patterns-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+}
+
+.pattern {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem;
+  background: #fafafa;
+  border-radius: 8px;
+
+  mat-icon {
+    font-size: 32px;
+    width: 32px;
+    height: 32px;
+  }
+}
+
+.pattern-label {
+  font-size: 12px;
+  color: #666;
+  display: block;
+  text-transform: uppercase;
+}
+
+.pattern-value {
+  font-weight: 500;
+  font-size: 16px;
+  display: block;
+}
+
+.pattern-hint {
+  font-size: 11px;
+  color: #999;
+}

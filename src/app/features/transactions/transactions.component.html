@@ -1,0 +1,116 @@
+<div class="transactions-container">
+  <app-transaction-toolbar
+    [totalCount]="transactions.length"
+    [filteredCount]="filteredTransactions.length"
+    [selectedCount]="selectedTransactions.length"
+    [uncategorizedCount]="uncategorizedCount"
+    [viewMode]="viewMode"
+    [isMatching]="isMatching"
+    [isCategorizing]="isCategorizing"
+    (viewModeChange)="viewMode = $event"
+    (toggleFiltersClick)="showFilters = !showFilters"
+    (importClick)="openImportDialog($event)"
+    (runMatchingClick)="runMatching()"
+    (matchingOverviewClick)="openMatchingOverview()"
+    (categorizeClick)="onCategorize($event)"
+    (viewProgressClick)="openCategorizationDialog()"
+    (exportClick)="actionsService.exportToCSV(filteredTransactions)"
+    (maintenanceClick)="onMaintenance($event)">
+  </app-transaction-toolbar>
+
+  <app-transaction-filters
+    *ngIf="showFilters"
+    [categories]="categories"
+    [sources]="sources"
+    (filtersChange)="onFiltersChange($event)">
+  </app-transaction-filters>
+
+  <app-selection-bar
+    [selectedCount]="selectedTransactions.length"
+    [allVisibleSelected]="allVisibleSelected"
+    [someVisibleSelected]="someVisibleSelected"
+    [isCategorizing]="isCategorizing"
+    [progressCurrent]="categorizationProgress.current"
+    [progressTotal]="categorizationProgress.total"
+    (toggleSelectAll)="toggleSelectAll($event)"
+    (clearSelection)="clearSelection()">
+  </app-selection-bar>
+
+  <app-summary-bar
+    [totalAmount]="totalAmount"
+    [incomeTotal]="incomeTotal"
+    [expenseTotal]="expenseTotal"
+    [selectedTotal]="selectedTotal"
+    [selectedCount]="selectedTransactions.length">
+  </app-summary-bar>
+
+  <div class="main-content">
+    <div class="transaction-list"
+         cdkDropList
+         #transactionList="cdkDropList"
+         [cdkDropListConnectedTo]="[]"
+         [cdkDropListData]="filteredTransactions">
+
+      <div *ngIf="isLoading" class="loading">
+        <mat-spinner diameter="40"></mat-spinner>
+        <span>Loading transactions...</span>
+      </div>
+
+      <div *ngIf="!isLoading && filteredTransactions.length === 0" class="empty-state">
+        <mat-icon>receipt_long</mat-icon>
+        <h3>No transactions found</h3>
+        <p>Try adjusting your filters or import some transactions.</p>
+      </div>
+
+      <ng-container *ngFor="let transaction of paginatedTransactions; trackBy: trackByFn">
+        <div cdkDrag [cdkDragData]="transaction" class="drag-wrapper" [class.compact]="viewMode === 'compact'">
+          <app-transaction-card
+            [transaction]="transaction"
+            [categories]="categories"
+            [selected]="isSelected(transaction)"
+            [expanded]="expandedIds.has(transaction.id)"
+            [compact]="viewMode === 'compact'"
+            (selectTransaction)="onSelectTransaction($event, $event)"
+            (toggleSelect)="onToggleSelect($event)"
+            (editTransaction)="onEditTransaction($event)"
+            (deleteTransaction)="onDeleteTransaction($event)"
+            (mergeTransaction)="onMergeTransaction($event)"
+            (splitTransaction)="onSplitTransaction($event)"
+            (expandChange)="onExpandChange(transaction, $event)"
+            (updateTransaction)="onUpdateTransaction($event)"
+            (askAI)="aiContextService.askAboutTransaction($event)"
+            (openDetail)="onEditTransaction($event)">
+          </app-transaction-card>
+
+          <div *cdkDragPreview class="drag-preview">
+            <mat-icon>receipt</mat-icon>
+            <span>{{ transaction.description | slice:0:30 }}</span>
+            <span class="amount">{{ transaction.amount | currency:'EUR' }}</span>
+          </div>
+          <div *cdkDragPlaceholder class="drag-placeholder"></div>
+        </div>
+      </ng-container>
+
+      <mat-paginator
+        *ngIf="filteredTransactions.length > 0"
+        [length]="filteredTransactions.length"
+        [pageSize]="pageSize"
+        [pageIndex]="pageIndex"
+        [pageSizeOptions]="pageSizeOptions"
+        (page)="onPageChange($event)"
+        showFirstLastButtons>
+      </mat-paginator>
+    </div>
+
+    <app-category-sidebar
+      [categories]="categories"
+      [categoryStats]="categoryStats"
+      [transactions]="filteredTransactions"
+      [connectedListIds]="['transactionList']"
+      (dropToCategory)="onDropToCategory($event.transaction, $event.category)"
+      (dropToUncategorize)="onDropToUncategorize($event)">
+    </app-category-sidebar>
+  </div>
+
+  <app-keyboard-help [visible]="showKeyboardHelp"></app-keyboard-help>
+</div>

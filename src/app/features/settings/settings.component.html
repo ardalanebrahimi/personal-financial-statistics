@@ -1,0 +1,229 @@
+<div class="settings-container">
+  <header class="settings-header">
+    <mat-icon>settings</mat-icon>
+    <div>
+      <h1>Settings</h1>
+      <p>Configure your accounts, categories, and preferences</p>
+    </div>
+  </header>
+
+  <mat-tab-group [(selectedIndex)]="selectedTabIndex"
+                 (selectedTabChange)="onTabChange($event)"
+                 animationDuration="200ms">
+    <!-- Connectors Tab -->
+    <mat-tab>
+      <ng-template mat-tab-label>
+        <mat-icon>account_balance</mat-icon>
+        <span>Connectors</span>
+      </ng-template>
+      <div class="tab-content">
+        <app-connectors-tab></app-connectors-tab>
+      </div>
+    </mat-tab>
+
+    <!-- Categories Tab -->
+    <mat-tab>
+      <ng-template mat-tab-label>
+        <mat-icon>category</mat-icon>
+        <span>Categories</span>
+      </ng-template>
+      <div class="tab-content">
+        <app-categories-tab></app-categories-tab>
+      </div>
+    </mat-tab>
+
+    <!-- Automation Tab -->
+    <mat-tab>
+      <ng-template mat-tab-label>
+        <mat-icon>smart_toy</mat-icon>
+        <span>Automation</span>
+      </ng-template>
+      <div class="tab-content">
+        <div class="automation-content">
+          <!-- Automation Settings -->
+          <mat-card class="settings-card">
+            <mat-card-header>
+              <mat-icon mat-card-avatar>auto_fix_high</mat-icon>
+              <mat-card-title>Automation Settings</mat-card-title>
+              <mat-card-subtitle>AI-powered features that work automatically</mat-card-subtitle>
+            </mat-card-header>
+            <mat-card-content>
+              <div class="setting-item" *ngIf="config">
+                <div class="setting-info">
+                  <h4>Auto-Categorize Transactions</h4>
+                  <p>Automatically categorize new transactions using AI rules</p>
+                </div>
+                <mat-slide-toggle
+                  [(ngModel)]="config.autoCategorize"
+                  (change)="saveConfig()"
+                  color="primary">
+                </mat-slide-toggle>
+              </div>
+
+              <mat-divider></mat-divider>
+
+              <div class="setting-item" *ngIf="config">
+                <div class="setting-info">
+                  <h4>Auto-Match Transactions</h4>
+                  <p>Automatically link related transactions across accounts</p>
+                </div>
+                <mat-slide-toggle
+                  [(ngModel)]="config.autoMatch"
+                  (change)="saveConfig()"
+                  color="primary">
+                </mat-slide-toggle>
+              </div>
+
+              <mat-divider></mat-divider>
+
+              <div class="setting-item" *ngIf="config">
+                <div class="setting-info">
+                  <h4>New Transaction Notifications</h4>
+                  <p>Show notifications when new transactions are imported</p>
+                </div>
+                <mat-slide-toggle
+                  [(ngModel)]="config.notifyOnNewTransactions"
+                  (change)="saveConfig()"
+                  color="primary">
+                </mat-slide-toggle>
+              </div>
+
+              <mat-divider></mat-divider>
+
+              <div class="setting-item" *ngIf="config">
+                <div class="setting-info">
+                  <h4>Scheduled Sync</h4>
+                  <p>Automatically sync connected accounts at regular intervals</p>
+                </div>
+                <mat-slide-toggle
+                  [(ngModel)]="config.scheduledSync.enabled"
+                  (change)="saveConfig()"
+                  color="primary">
+                </mat-slide-toggle>
+              </div>
+
+              <div class="sync-interval" *ngIf="config?.scheduledSync?.enabled">
+                <mat-form-field appearance="outline">
+                  <mat-label>Sync interval (minutes)</mat-label>
+                  <input matInput type="number"
+                         [ngModel]="config?.scheduledSync?.intervalMinutes"
+                         (ngModelChange)="config && config.scheduledSync && (config.scheduledSync.intervalMinutes = $event)"
+                         (change)="saveConfig()"
+                         min="15"
+                         max="1440">
+                  <mat-hint>Minimum 15 minutes, maximum 24 hours</mat-hint>
+                </mat-form-field>
+              </div>
+            </mat-card-content>
+          </mat-card>
+
+          <!-- Quick Actions -->
+          <mat-card class="settings-card">
+            <mat-card-header>
+              <mat-icon mat-card-avatar>bolt</mat-icon>
+              <mat-card-title>Quick Actions</mat-card-title>
+              <mat-card-subtitle>Run automation tasks manually</mat-card-subtitle>
+            </mat-card-header>
+            <mat-card-content>
+              <div class="quick-actions">
+                <button mat-stroked-button color="primary"
+                        (click)="runAutoCategorize()"
+                        [disabled]="isProcessing">
+                  <mat-icon>category</mat-icon>
+                  Auto-Categorize All
+                  <mat-progress-spinner *ngIf="isProcessing === 'categorize'"
+                                        mode="indeterminate"
+                                        diameter="20">
+                  </mat-progress-spinner>
+                </button>
+
+                <button mat-stroked-button color="primary"
+                        (click)="runAutoMatch()"
+                        [disabled]="isProcessing">
+                  <mat-icon>link</mat-icon>
+                  Run Matching
+                  <mat-progress-spinner *ngIf="isProcessing === 'match'"
+                                        mode="indeterminate"
+                                        diameter="20">
+                  </mat-progress-spinner>
+                </button>
+
+                <button mat-stroked-button color="primary"
+                        (click)="processAll()"
+                        [disabled]="isProcessing">
+                  <mat-icon>auto_fix_high</mat-icon>
+                  Process All New
+                  <mat-progress-spinner *ngIf="isProcessing === 'process'"
+                                        mode="indeterminate"
+                                        diameter="20">
+                  </mat-progress-spinner>
+                </button>
+              </div>
+
+              <div class="last-result" *ngIf="lastResult">
+                <mat-icon>check_circle</mat-icon>
+                <span>{{ lastResult }}</span>
+              </div>
+            </mat-card-content>
+          </mat-card>
+
+          <!-- AI Rules Stats -->
+          <mat-card class="settings-card">
+            <mat-card-header>
+              <mat-icon mat-card-avatar>psychology</mat-icon>
+              <mat-card-title>AI Learning</mat-card-title>
+              <mat-card-subtitle>Statistics about learned categorization rules</mat-card-subtitle>
+            </mat-card-header>
+            <mat-card-content>
+              <div class="stats-grid" *ngIf="ruleStats">
+                <div class="stat">
+                  <span class="stat-value">{{ ruleStats.totalRules }}</span>
+                  <span class="stat-label">Rules</span>
+                </div>
+                <div class="stat">
+                  <span class="stat-value">{{ ruleStats.activeRules }}</span>
+                  <span class="stat-label">Active</span>
+                </div>
+                <div class="stat">
+                  <span class="stat-value">{{ ruleStats.totalTimesApplied }}</span>
+                  <span class="stat-label">Applications</span>
+                </div>
+                <div class="stat">
+                  <span class="stat-value">{{ (ruleStats.averageConfidence || 0).toFixed(0) }}%</span>
+                  <span class="stat-label">Avg Confidence</span>
+                </div>
+              </div>
+
+              <p class="info-text">
+                Rules are automatically created when you categorize transactions.
+                The system learns from your choices and improves over time.
+              </p>
+
+              <div class="rule-actions">
+                <button mat-stroked-button (click)="consolidateRules()" [disabled]="isProcessing">
+                  <mat-icon>merge_type</mat-icon>
+                  Consolidate Rules
+                </button>
+              </div>
+            </mat-card-content>
+          </mat-card>
+        </div>
+      </div>
+    </mat-tab>
+
+    <!-- Help Tab -->
+    <mat-tab>
+      <ng-template mat-tab-label>
+        <mat-icon>help_outline</mat-icon>
+        <span>Help</span>
+      </ng-template>
+      <div class="tab-content">
+        <app-help-tab></app-help-tab>
+      </div>
+    </mat-tab>
+  </mat-tab-group>
+
+  <div class="loading-overlay" *ngIf="loading">
+    <mat-progress-spinner mode="indeterminate"></mat-progress-spinner>
+  </div>
+</div>
