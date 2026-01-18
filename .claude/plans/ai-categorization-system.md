@@ -281,14 +281,13 @@ Shows in header when a job is active:
 ### 2. Categorization Dialog Component (NEW)
 **File:** `src/app/features/transactions/categorization-dialog.component.ts`
 
-**Purpose: Learning & Feedback (not approval)**
-- Progress overview with real-time updates
-- Stream of AI suggestions as they're processed
-- User can provide feedback: "This should be X instead of Y"
-- AI learns from corrections → creates rules
-- Conversation panel to discuss/explain categorization logic
-- "Trust AI" toggle - when enabled, skips review for future jobs
-- Batch actions: Apply all, Teach AI about mistakes
+**Purpose: Real-time Monitoring & Teaching**
+- Live progress: Watch AI categorize transactions in real-time
+- Categories applied immediately (no approval needed)
+- Correction interface: "This should be X instead of Y" → AI learns
+- Conversation panel: Ask AI why it chose a category, teach it patterns
+- Rules panel: See learned rules, edit/delete if needed
+- Error list: Transactions AI couldn't categorize confidently
 
 ### 3. Hierarchical Category Selector (NEW)
 **File:** `src/app/shared/category-selector.component.ts`
@@ -322,10 +321,11 @@ Shows in header when a job is active:
 
 ### 3. Review Mode ✅
 **Review is for LEARNING, not approval**
-- Initial review helps user understand how AI categorizes
-- User provides feedback to fine-tune AI behavior
-- After sufficient feedback, review becomes optional
-- **Goal: User eventually trusts AI completely** → full automation
+- **Categories applied IMMEDIATELY** as AI processes (no waiting)
+- User watches real-time progress, corrects mistakes
+- AI learns from corrections → creates rules
+- Natural flow: AI improves → fewer mistakes → user stops correcting
+- No explicit "trust" toggle - trust emerges naturally from fewer errors
 
 ### 4. Linked Orders Context ✅
 **YES - Use linked order details as extra context**
