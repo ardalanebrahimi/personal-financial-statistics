@@ -193,6 +193,27 @@ CREATE TABLE IF NOT EXISTS jobs (
   file_path TEXT
 );
 
+-- Recurring patterns table
+CREATE TABLE IF NOT EXISTS recurring_patterns (
+  id TEXT PRIMARY KEY,
+  beneficiary TEXT NOT NULL,
+  average_amount REAL NOT NULL,
+  frequency TEXT NOT NULL CHECK(frequency IN ('weekly', 'biweekly', 'monthly', 'quarterly', 'yearly', 'irregular')),
+  average_interval_days INTEGER NOT NULL,
+  confidence TEXT NOT NULL CHECK(confidence IN ('high', 'medium', 'low')),
+  transaction_ids TEXT NOT NULL, -- JSON array of transaction IDs
+  first_occurrence TEXT NOT NULL,
+  last_occurrence TEXT NOT NULL,
+  occurrence_count INTEGER NOT NULL,
+  category TEXT,
+  is_active INTEGER DEFAULT 1,
+  next_expected_date TEXT,
+  amount_variance REAL,
+  description TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 -- Indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
 CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category);
@@ -202,6 +223,8 @@ CREATE INDEX IF NOT EXISTS idx_transactions_context ON transactions(is_context_o
 CREATE INDEX IF NOT EXISTS idx_matches_primary ON matches(primary_transaction_id);
 CREATE INDEX IF NOT EXISTS idx_rules_enabled ON rules(enabled, priority);
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+CREATE INDEX IF NOT EXISTS idx_recurring_beneficiary ON recurring_patterns(beneficiary);
+CREATE INDEX IF NOT EXISTS idx_recurring_active ON recurring_patterns(is_active);
 `;
 
 // Initialize schema
@@ -1049,6 +1072,146 @@ function rowToJob(row: any): Job {
     completedAt: row.completed_at,
     fileName: row.file_name,
     filePath: row.file_path
+  };
+}
+
+// ==================== RECURRING PATTERN OPERATIONS ====================
+
+export interface RecurringPattern {
+  id: string;
+  beneficiary: string;
+  averageAmount: number;
+  frequency: 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'yearly' | 'irregular';
+  averageIntervalDays: number;
+  confidence: 'high' | 'medium' | 'low';
+  transactionIds: string[];
+  firstOccurrence: string;
+  lastOccurrence: string;
+  occurrenceCount: number;
+  category?: string;
+  isActive: boolean;
+  nextExpectedDate?: string;
+  amountVariance: number;
+  description?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function getAllRecurringPatterns(): RecurringPattern[] {
+  const rows = db.prepare(`
+    SELECT * FROM recurring_patterns ORDER BY is_active DESC, last_occurrence DESC
+  `).all() as any[];
+  return rows.map(rowToRecurringPattern);
+}
+
+export function getActiveRecurringPatterns(): RecurringPattern[] {
+  const rows = db.prepare(`
+    SELECT * FROM recurring_patterns WHERE is_active = 1 ORDER BY last_occurrence DESC
+  `).all() as any[];
+  return rows.map(rowToRecurringPattern);
+}
+
+export function getRecurringPatternById(id: string): RecurringPattern | null {
+  const row = db.prepare(`SELECT * FROM recurring_patterns WHERE id = ?`).get(id) as any;
+  return row ? rowToRecurringPattern(row) : null;
+}
+
+export function saveRecurringPattern(pattern: RecurringPattern): void {
+  const now = new Date().toISOString();
+  const existing = getRecurringPatternById(pattern.id);
+
+  if (existing) {
+    db.prepare(`
+      UPDATE recurring_patterns SET
+        beneficiary = ?, average_amount = ?, frequency = ?, average_interval_days = ?,
+        confidence = ?, transaction_ids = ?, first_occurrence = ?, last_occurrence = ?,
+        occurrence_count = ?, category = ?, is_active = ?, next_expected_date = ?,
+        amount_variance = ?, description = ?, updated_at = ?
+      WHERE id = ?
+    `).run(
+      pattern.beneficiary,
+      pattern.averageAmount,
+      pattern.frequency,
+      pattern.averageIntervalDays,
+      pattern.confidence,
+      JSON.stringify(pattern.transactionIds),
+      pattern.firstOccurrence,
+      pattern.lastOccurrence,
+      pattern.occurrenceCount,
+      pattern.category || null,
+      pattern.isActive ? 1 : 0,
+      pattern.nextExpectedDate || null,
+      pattern.amountVariance,
+      pattern.description || null,
+      now,
+      pattern.id
+    );
+  } else {
+    db.prepare(`
+      INSERT INTO recurring_patterns (
+        id, beneficiary, average_amount, frequency, average_interval_days,
+        confidence, transaction_ids, first_occurrence, last_occurrence,
+        occurrence_count, category, is_active, next_expected_date,
+        amount_variance, description, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      pattern.id,
+      pattern.beneficiary,
+      pattern.averageAmount,
+      pattern.frequency,
+      pattern.averageIntervalDays,
+      pattern.confidence,
+      JSON.stringify(pattern.transactionIds),
+      pattern.firstOccurrence,
+      pattern.lastOccurrence,
+      pattern.occurrenceCount,
+      pattern.category || null,
+      pattern.isActive ? 1 : 0,
+      pattern.nextExpectedDate || null,
+      pattern.amountVariance,
+      pattern.description || null,
+      now,
+      now
+    );
+  }
+}
+
+export function saveRecurringPatterns(patterns: RecurringPattern[]): void {
+  const insertMany = db.transaction(() => {
+    for (const pattern of patterns) {
+      saveRecurringPattern(pattern);
+    }
+  });
+  insertMany();
+}
+
+export function deleteRecurringPattern(id: string): void {
+  db.prepare(`DELETE FROM recurring_patterns WHERE id = ?`).run(id);
+}
+
+export function clearRecurringPatterns(): void {
+  db.prepare(`DELETE FROM recurring_patterns`).run();
+}
+
+function rowToRecurringPattern(row: any): RecurringPattern {
+  return {
+    id: row.id,
+    beneficiary: row.beneficiary,
+    averageAmount: row.average_amount,
+    frequency: row.frequency,
+    averageIntervalDays: row.average_interval_days,
+    confidence: row.confidence,
+    transactionIds: JSON.parse(row.transaction_ids || '[]'),
+    firstOccurrence: row.first_occurrence,
+    lastOccurrence: row.last_occurrence,
+    occurrenceCount: row.occurrence_count,
+    category: row.category,
+    isActive: row.is_active === 1,
+    nextExpectedDate: row.next_expected_date,
+    amountVariance: row.amount_variance,
+    description: row.description,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
   };
 }
 

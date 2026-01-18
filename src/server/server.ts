@@ -16,6 +16,9 @@ import { getBrowserService } from './browser';
 import { TransactionMatcher, applyMatchesToTransactions, TransactionMatch as MatcherTransactionMatch, MatchSuggestion, StoredTransaction as MatcherStoredTransaction } from './matching/matcher';
 import { OrderMatcher, applyOrderMatches, getLinkedOrderDetails, OrderMatchResult, OrderMatchSuggestion, MatchableTransaction } from './matching/order-matcher';
 import { AmazonConnector } from './connectors/amazon-connector';
+import { PayPalTextParser } from './connectors/paypal-connector';
+import { PayPalMatcher, applyPayPalMatches, PayPalMatchingResult } from './matching/paypal-matcher';
+import { RecurringDetector, RecurringPattern as DetectedPattern, predictNextOccurrences } from './recurring/recurring-detector';
 import { RulesEngine, Rule, StoredTransaction as RulesStoredTransaction } from './ai/rules-engine';
 import { CrossAccountIntelligence, EnrichedTransaction } from './ai/cross-account-intelligence';
 import { AIAssistant, AssistantContext } from './ai/ai-assistant';
@@ -1627,6 +1630,186 @@ app.post('/import/amazon', async (req: Request, res: Response) => {
   }
 });
 
+// ==================== PAYPAL TEXT IMPORT ENDPOINT ====================
+
+// POST /import/paypal - Import PayPal transaction history from text export
+app.post('/import/paypal', async (req: Request, res: Response) => {
+  try {
+    const { textData, startDate, endDate } = req.body;
+
+    if (!textData) {
+      res.status(400).json({ error: 'Text data is required' });
+      return;
+    }
+
+    // Create PayPal text parser and import
+    const parser = new PayPalTextParser();
+
+    const dateRange = (startDate && endDate) ? {
+      startDate: new Date(startDate),
+      endDate: new Date(endDate)
+    } : undefined;
+
+    const result = parser.importFromText(textData, dateRange);
+
+    if (!result.success && result.transactions.length === 0) {
+      res.status(400).json({
+        error: 'Failed to import PayPal data',
+        details: result.errors
+      });
+      return;
+    }
+
+    // Save transactions to storage
+    let newCount = 0;
+    let duplicateCount = 0;
+    let recurringCount = 0;
+
+    for (const tx of result.transactions) {
+      // Check for duplicates
+      const existingTx = await getStoredTransactions();
+      const isDuplicate = existingTx.some(
+        existing =>
+          existing.source?.externalId === tx.externalId ||
+          (
+            Math.abs(new Date(existing.date).getTime() - tx.date.getTime()) < 86400000 &&
+            Math.abs(existing.amount - tx.amount) < 0.01 &&
+            existing.beneficiary === tx.beneficiary
+          )
+      );
+
+      if (!isDuplicate) {
+        const isRecurring = (tx.rawData as any)?.isRecurring || false;
+        if (isRecurring) recurringCount++;
+
+        await saveTransaction({
+          id: crypto.randomUUID(),
+          date: tx.date.toISOString(),
+          description: tx.description,
+          amount: tx.amount,
+          category: '', // Will be set by AI categorization or user
+          beneficiary: tx.beneficiary || '',
+          source: {
+            connectorType: 'paypal',
+            externalId: tx.externalId,
+            importedAt: new Date().toISOString()
+          },
+          isContextOnly: true // PayPal transactions are context data for matching to bank transactions
+        });
+        newCount++;
+      } else {
+        duplicateCount++;
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'PayPal import completed',
+      stats: {
+        ...result.stats,
+        newTransactions: newCount,
+        duplicatesSkipped: duplicateCount,
+        recurringTransactions: recurringCount
+      },
+      errors: result.errors.length > 0 ? result.errors : undefined
+    });
+
+  } catch (error) {
+    console.error('Error importing PayPal data:', error);
+    res.status(500).json({
+      error: 'Failed to import PayPal data',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// POST /import/paypal/file - Import PayPal text file
+app.post('/import/paypal/file', upload.single('file'), async (req: Request, res: Response) => {
+  try {
+    if (!req.file) {
+      res.status(400).json({ error: 'No file uploaded' });
+      return;
+    }
+
+    const textData = fs.readFileSync(req.file.path, 'utf-8');
+
+    // Clean up uploaded file
+    fs.unlinkSync(req.file.path);
+
+    // Create PayPal text parser and import
+    const parser = new PayPalTextParser();
+    const result = parser.importFromText(textData);
+
+    if (!result.success && result.transactions.length === 0) {
+      res.status(400).json({
+        error: 'Failed to import PayPal data',
+        details: result.errors
+      });
+      return;
+    }
+
+    // Save transactions to storage
+    let newCount = 0;
+    let duplicateCount = 0;
+    let recurringCount = 0;
+
+    for (const tx of result.transactions) {
+      const existingTx = await getStoredTransactions();
+      const isDuplicate = existingTx.some(
+        existing =>
+          existing.source?.externalId === tx.externalId ||
+          (
+            Math.abs(new Date(existing.date).getTime() - tx.date.getTime()) < 86400000 &&
+            Math.abs(existing.amount - tx.amount) < 0.01 &&
+            existing.beneficiary === tx.beneficiary
+          )
+      );
+
+      if (!isDuplicate) {
+        const isRecurring = (tx.rawData as any)?.isRecurring || false;
+        if (isRecurring) recurringCount++;
+
+        await saveTransaction({
+          id: crypto.randomUUID(),
+          date: tx.date.toISOString(),
+          description: tx.description,
+          amount: tx.amount,
+          category: '',
+          beneficiary: tx.beneficiary || '',
+          source: {
+            connectorType: 'paypal',
+            externalId: tx.externalId,
+            importedAt: new Date().toISOString()
+          },
+          isContextOnly: true
+        });
+        newCount++;
+      } else {
+        duplicateCount++;
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'PayPal file import completed',
+      stats: {
+        ...result.stats,
+        newTransactions: newCount,
+        duplicatesSkipped: duplicateCount,
+        recurringTransactions: recurringCount
+      },
+      errors: result.errors.length > 0 ? result.errors : undefined
+    });
+
+  } catch (error) {
+    console.error('Error importing PayPal file:', error);
+    res.status(500).json({
+      error: 'Failed to import PayPal file',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
 // ==================== MATCHING HELPERS ====================
 
 // Use database TransactionMatch type
@@ -2155,6 +2338,449 @@ app.get('/transactions/bank-only', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error getting bank transactions:', error);
     return res.status(500).json({ error: 'Failed to get bank transactions' });
+  }
+});
+
+// ==================== PAYPAL MATCHING ENDPOINTS ====================
+
+// POST /paypal-matching/run - Run PayPal matching algorithm (PayPal transactions → Bank transactions)
+app.post('/paypal-matching/run', async (req: Request, res: Response) => {
+  try {
+    const transactions = await getStoredTransactions();
+
+    // Convert to matchable format
+    const matchableTransactions: MatchableTransaction[] = transactions.map(tx => ({
+      id: tx.id,
+      date: tx.date,
+      description: tx.description,
+      amount: tx.amount,
+      category: tx.category,
+      beneficiary: tx.beneficiary,
+      source: tx.source,
+      isContextOnly: tx.isContextOnly,
+      linkedOrderIds: tx.linkedOrderIds
+    }));
+
+    // Run PayPal matching
+    const matcher = new PayPalMatcher(matchableTransactions);
+    const result = matcher.runMatching();
+
+    // Apply auto-matches
+    if (result.autoMatches.length > 0) {
+      const updatedTransactions = applyPayPalMatches(matchableTransactions, result.autoMatches);
+
+      // Save updated transactions
+      await bulkSaveTransactions(updatedTransactions.map(tx => ({
+        ...tx,
+        category: tx.category || '',
+        timestamp: new Date().toISOString()
+      })) as db.StoredTransaction[]);
+    }
+
+    res.json({
+      success: true,
+      autoMatched: result.autoMatches.length,
+      suggestions: result.suggestions.length,
+      stats: result.stats,
+      matches: result.autoMatches,
+      pendingSuggestions: result.suggestions
+    });
+  } catch (error) {
+    console.error('Error running PayPal matcher:', error);
+    res.status(500).json({ error: 'Failed to run PayPal matching' });
+  }
+});
+
+// GET /paypal-matching/suggestions - Get PayPal match suggestions without applying
+app.get('/paypal-matching/suggestions', async (req: Request, res: Response) => {
+  try {
+    const transactions = await getStoredTransactions();
+
+    const matchableTransactions: MatchableTransaction[] = transactions.map(tx => ({
+      id: tx.id,
+      date: tx.date,
+      description: tx.description,
+      amount: tx.amount,
+      category: tx.category,
+      beneficiary: tx.beneficiary,
+      source: tx.source,
+      isContextOnly: tx.isContextOnly,
+      linkedOrderIds: tx.linkedOrderIds
+    }));
+
+    const matcher = new PayPalMatcher(matchableTransactions);
+    const result = matcher.runMatching();
+
+    res.json({
+      suggestions: result.suggestions,
+      potentialAutoMatches: result.autoMatches,
+      stats: result.stats
+    });
+  } catch (error) {
+    console.error('Error getting PayPal suggestions:', error);
+    res.status(500).json({ error: 'Failed to get PayPal match suggestions' });
+  }
+});
+
+// POST /paypal-matching/link - Manually link PayPal transactions to a bank transaction
+app.post('/paypal-matching/link', async (req: Request, res: Response) => {
+  try {
+    const { bankTransactionId, paypalIds } = req.body;
+
+    if (!bankTransactionId || !paypalIds || !Array.isArray(paypalIds)) {
+      res.status(400).json({ error: 'bankTransactionId and paypalIds array are required' });
+      return;
+    }
+
+    const transactions = await getStoredTransactions();
+
+    // Find and update bank transaction
+    const bankTx = transactions.find(tx => tx.id === bankTransactionId);
+    if (!bankTx) {
+      res.status(404).json({ error: 'Bank transaction not found' });
+      return;
+    }
+
+    if (bankTx.isContextOnly) {
+      res.status(400).json({ error: 'Cannot link to a context-only transaction' });
+      return;
+    }
+
+    // Verify PayPal transactions exist
+    const paypalTxs = transactions.filter(tx =>
+      paypalIds.includes(tx.id) &&
+      tx.isContextOnly &&
+      tx.source?.connectorType === 'paypal'
+    );
+
+    if (paypalTxs.length !== paypalIds.length) {
+      res.status(400).json({ error: 'Some PayPal transactions not found or invalid' });
+      return;
+    }
+
+    // Update bank transaction with new links
+    const existingLinks = bankTx.linkedOrderIds || [];
+    const newLinks = [...new Set([...existingLinks, ...paypalIds])];
+
+    await saveTransaction({
+      ...bankTx,
+      linkedOrderIds: newLinks
+    });
+
+    res.json({
+      success: true,
+      bankTransactionId,
+      linkedPayPalTransactions: newLinks.length,
+      totalPayPalAmount: paypalTxs.reduce((sum, tx) => sum + Math.abs(tx.amount), 0)
+    });
+  } catch (error) {
+    console.error('Error linking PayPal transactions:', error);
+    res.status(500).json({ error: 'Failed to link PayPal transactions' });
+  }
+});
+
+// GET /paypal-matching/linked/:id - Get linked PayPal transactions for a bank transaction
+app.get('/paypal-matching/linked/:id', async (req: Request, res: Response) => {
+  try {
+    const bankTransactionId = req.params['id'];
+    const transactions = await getStoredTransactions();
+
+    const bankTx = transactions.find(tx => tx.id === bankTransactionId);
+    if (!bankTx) {
+      res.status(404).json({ error: 'Bank transaction not found' });
+      return;
+    }
+
+    if (!bankTx.linkedOrderIds || bankTx.linkedOrderIds.length === 0) {
+      res.json({
+        bankTransaction: bankTx,
+        linkedPayPal: [],
+        totalPayPalAmount: 0
+      });
+      return;
+    }
+
+    // Get linked PayPal transaction details
+    const linkedPayPal = transactions.filter(tx =>
+      bankTx.linkedOrderIds!.includes(tx.id) &&
+      tx.source?.connectorType === 'paypal'
+    );
+
+    const totalPayPalAmount = linkedPayPal.reduce(
+      (sum, tx) => sum + Math.abs(tx.amount), 0
+    );
+
+    res.json({
+      bankTransaction: bankTx,
+      linkedPayPal,
+      totalPayPalAmount,
+      amountDifference: Math.abs(Math.abs(bankTx.amount) - totalPayPalAmount)
+    });
+  } catch (error) {
+    console.error('Error getting linked PayPal transactions:', error);
+    res.status(500).json({ error: 'Failed to get linked PayPal transactions' });
+  }
+});
+
+// ==================== RECURRING TRANSACTION ENDPOINTS ====================
+
+// POST /recurring/detect - Detect recurring transaction patterns
+app.post('/recurring/detect', async (req: Request, res: Response) => {
+  try {
+    const { saveResults } = req.body;
+    const transactions = await getStoredTransactions();
+
+    // Convert to detectable format
+    const detectableTransactions = transactions.map(tx => ({
+      id: tx.id,
+      date: tx.date,
+      description: tx.description,
+      amount: tx.amount,
+      beneficiary: tx.beneficiary,
+      category: tx.category,
+      isContextOnly: tx.isContextOnly
+    }));
+
+    // Run detection
+    const detector = new RecurringDetector(detectableTransactions);
+    const result = detector.detectPatterns();
+
+    // Save patterns if requested
+    if (saveResults && result.patterns.length > 0) {
+      const now = new Date().toISOString();
+      const dbPatterns: db.RecurringPattern[] = result.patterns.map(p => ({
+        id: p.id,
+        beneficiary: p.beneficiary,
+        averageAmount: p.averageAmount,
+        frequency: p.frequency,
+        averageIntervalDays: p.averageIntervalDays,
+        confidence: p.confidence,
+        transactionIds: p.transactionIds,
+        firstOccurrence: p.firstOccurrence,
+        lastOccurrence: p.lastOccurrence,
+        occurrenceCount: p.occurrenceCount,
+        category: p.category,
+        isActive: p.isActive,
+        nextExpectedDate: p.nextExpectedDate,
+        amountVariance: p.amountVariance,
+        description: p.description,
+        createdAt: now,
+        updatedAt: now
+      }));
+
+      // Clear old patterns and save new ones
+      db.clearRecurringPatterns();
+      db.saveRecurringPatterns(dbPatterns);
+    }
+
+    res.json({
+      success: true,
+      patterns: result.patterns,
+      stats: result.stats,
+      saved: saveResults === true
+    });
+  } catch (error) {
+    console.error('Error detecting recurring patterns:', error);
+    res.status(500).json({ error: 'Failed to detect recurring patterns' });
+  }
+});
+
+// GET /recurring/patterns - Get all saved recurring patterns
+app.get('/recurring/patterns', async (req: Request, res: Response) => {
+  try {
+    const activeOnly = req.query['active'] === 'true';
+    const patterns = activeOnly
+      ? db.getActiveRecurringPatterns()
+      : db.getAllRecurringPatterns();
+
+    res.json({
+      patterns,
+      total: patterns.length,
+      active: patterns.filter(p => p.isActive).length
+    });
+  } catch (error) {
+    console.error('Error getting recurring patterns:', error);
+    res.status(500).json({ error: 'Failed to get recurring patterns' });
+  }
+});
+
+// GET /recurring/patterns/:id - Get a specific recurring pattern
+app.get('/recurring/patterns/:id', async (req: Request, res: Response) => {
+  try {
+    const patternId = req.params['id'];
+    const pattern = db.getRecurringPatternById(patternId);
+
+    if (!pattern) {
+      res.status(404).json({ error: 'Pattern not found' });
+      return;
+    }
+
+    // Get associated transactions
+    const transactions = await getStoredTransactions();
+    const patternTransactions = transactions.filter(tx =>
+      pattern.transactionIds.includes(tx.id)
+    );
+
+    // Predict next occurrences
+    const predictions = predictNextOccurrences(pattern as any, 3);
+
+    res.json({
+      pattern,
+      transactions: patternTransactions,
+      predictions: predictions.map(d => d.toISOString())
+    });
+  } catch (error) {
+    console.error('Error getting recurring pattern:', error);
+    res.status(500).json({ error: 'Failed to get recurring pattern' });
+  }
+});
+
+// PUT /recurring/patterns/:id - Update a recurring pattern
+app.put('/recurring/patterns/:id', async (req: Request, res: Response) => {
+  try {
+    const patternId = req.params['id'];
+    const updates = req.body;
+
+    const existing = db.getRecurringPatternById(patternId);
+    if (!existing) {
+      res.status(404).json({ error: 'Pattern not found' });
+      return;
+    }
+
+    // Merge updates
+    const updated: db.RecurringPattern = {
+      ...existing,
+      ...updates,
+      id: patternId, // Prevent ID change
+      updatedAt: new Date().toISOString()
+    };
+
+    db.saveRecurringPattern(updated);
+
+    res.json({
+      success: true,
+      pattern: updated
+    });
+  } catch (error) {
+    console.error('Error updating recurring pattern:', error);
+    res.status(500).json({ error: 'Failed to update recurring pattern' });
+  }
+});
+
+// DELETE /recurring/patterns/:id - Delete a recurring pattern
+app.delete('/recurring/patterns/:id', async (req: Request, res: Response) => {
+  try {
+    const patternId = req.params['id'];
+
+    const existing = db.getRecurringPatternById(patternId);
+    if (!existing) {
+      res.status(404).json({ error: 'Pattern not found' });
+      return;
+    }
+
+    db.deleteRecurringPattern(patternId);
+
+    res.json({
+      success: true,
+      deletedId: patternId
+    });
+  } catch (error) {
+    console.error('Error deleting recurring pattern:', error);
+    res.status(500).json({ error: 'Failed to delete recurring pattern' });
+  }
+});
+
+// POST /recurring/patterns/:id/categorize - Apply category to all transactions in pattern
+app.post('/recurring/patterns/:id/categorize', async (req: Request, res: Response) => {
+  try {
+    const patternId = req.params['id'];
+    const { category } = req.body;
+
+    if (!category) {
+      res.status(400).json({ error: 'Category is required' });
+      return;
+    }
+
+    const pattern = db.getRecurringPatternById(patternId);
+    if (!pattern) {
+      res.status(404).json({ error: 'Pattern not found' });
+      return;
+    }
+
+    // Update all transactions in the pattern
+    const transactions = await getStoredTransactions();
+    let updatedCount = 0;
+
+    for (const txId of pattern.transactionIds) {
+      const tx = transactions.find(t => t.id === txId);
+      if (tx) {
+        await saveTransaction({
+          ...tx,
+          category
+        });
+        updatedCount++;
+      }
+    }
+
+    // Update pattern category
+    db.saveRecurringPattern({
+      ...pattern,
+      category,
+      updatedAt: new Date().toISOString()
+    });
+
+    res.json({
+      success: true,
+      updatedTransactions: updatedCount,
+      category
+    });
+  } catch (error) {
+    console.error('Error categorizing recurring pattern:', error);
+    res.status(500).json({ error: 'Failed to categorize recurring pattern' });
+  }
+});
+
+// GET /recurring/summary - Get summary of recurring patterns
+app.get('/recurring/summary', async (req: Request, res: Response) => {
+  try {
+    const patterns = db.getAllRecurringPatterns();
+    const active = patterns.filter(p => p.isActive);
+
+    // Calculate totals by frequency
+    const byFrequency: Record<string, { count: number; totalAmount: number }> = {};
+    for (const p of active) {
+      if (!byFrequency[p.frequency]) {
+        byFrequency[p.frequency] = { count: 0, totalAmount: 0 };
+      }
+      byFrequency[p.frequency].count++;
+      byFrequency[p.frequency].totalAmount += p.averageAmount;
+    }
+
+    // Calculate monthly estimated total
+    const frequencyMultipliers: Record<string, number> = {
+      weekly: 4.33,
+      biweekly: 2.17,
+      monthly: 1,
+      quarterly: 0.33,
+      yearly: 0.083,
+      irregular: 0
+    };
+
+    let monthlyEstimate = 0;
+    for (const p of active) {
+      monthlyEstimate += p.averageAmount * (frequencyMultipliers[p.frequency] || 0);
+    }
+
+    res.json({
+      totalPatterns: patterns.length,
+      activePatterns: active.length,
+      byFrequency,
+      monthlyEstimate: Math.round(monthlyEstimate * 100) / 100,
+      yearlyEstimate: Math.round(monthlyEstimate * 12 * 100) / 100
+    });
+  } catch (error) {
+    console.error('Error getting recurring summary:', error);
+    res.status(500).json({ error: 'Failed to get recurring summary' });
   }
 });
 

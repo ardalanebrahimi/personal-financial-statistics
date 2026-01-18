@@ -29,3 +29,11 @@ export {
   type OrderMatchType,
   type MatchableTransaction
 } from './order-matcher';
+
+// PayPal matching (PayPal transactions → Bank transactions)
+export {
+  PayPalMatcher,
+  applyPayPalMatches,
+  getLinkedPayPalDetails,
+  type PayPalMatchingResult
+} from './paypal-matcher';
