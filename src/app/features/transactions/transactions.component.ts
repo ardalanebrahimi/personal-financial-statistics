@@ -1,33 +1,33 @@
-import { Component, OnInit, OnDestroy, HostListener, ViewChildren, QueryList, ElementRef } from '@angular/core';
+/**
+ * Transactions Component
+ *
+ * Main container component for transaction management.
+ * Orchestrates sub-components for toolbar, filters, list, and sidebar.
+ */
+
+import { Component, OnInit, OnDestroy, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormsModule } from '@angular/forms';
-import { MatCardModule } from '@angular/material/card';
-import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
-import { MatChipsModule } from '@angular/material/chips';
-import { MatSelectModule } from '@angular/material/select';
-import { MatInputModule } from '@angular/material/input';
-import { MatDatepickerModule } from '@angular/material/datepicker';
-import { MatNativeDateModule } from '@angular/material/core';
-import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatDialog, MatDialogModule } from '@angular/material/dialog';
-import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatPaginatorModule, PageEvent } from '@angular/material/paginator';
-import { MatMenuModule } from '@angular/material/menu';
-import { MatDividerModule } from '@angular/material/divider';
-import { MatProgressBarModule } from '@angular/material/progress-bar';
-import { MatCheckboxModule } from '@angular/material/checkbox';
-import { DragDropModule, CdkDragDrop, CdkDrag, CdkDropList, moveItemInArray, transferArrayItem } from '@angular/cdk/drag-drop';
+import { DragDropModule, CdkDragDrop } from '@angular/cdk/drag-drop';
 import { Subscription } from 'rxjs';
 
 import { TransactionService } from '../../services/transaction.service';
 import { CategoryService } from '../../services/category.service';
 import { AIContextService } from '../../services/ai-context.service';
-import { AIService } from '../../services/ai.service';
-import { CategorizationService } from '../../services/categorization.service';
 import { Transaction, Category } from '../../core/models/transaction.model';
+import {
+  TransactionFilterService,
+  TransactionFilters,
+  TransactionSelectionService,
+  TransactionUndoService,
+  TransactionActionsService,
+  TransactionKeyboardService
+} from './services';
+
 import { TransactionCardComponent } from './transaction-card.component';
 import { MergeDialogComponent } from './merge-dialog.component';
 import { SplitDialogComponent } from './split-dialog.component';
@@ -36,327 +36,89 @@ import { ImportDialogComponent, ImportDialogResult } from './import-dialog.compo
 import { DuplicatesDialogComponent, DuplicatesDialogResult } from './duplicates-dialog.component';
 import { MatchingOverviewDialogComponent } from './matching-overview-dialog.component';
 import { CategorizationDialogComponent } from './categorization-dialog.component';
-import { CategorizationProgressComponent } from '../../shared/categorization-progress/categorization-progress.component';
 
-interface UndoAction {
-  type: 'category' | 'merge' | 'split' | 'delete' | 'edit';
-  data: any;
-  description: string;
-}
+import {
+  TransactionToolbarComponent,
+  TransactionFiltersComponent,
+  SelectionBarComponent,
+  SummaryBarComponent,
+  CategorySidebarComponent,
+  KeyboardHelpComponent,
+  CategoryStat
+} from './components';
 
 @Component({
   selector: 'app-transactions',
   standalone: true,
   imports: [
     CommonModule,
-    FormsModule,
-    MatCardModule,
-    MatButtonModule,
     MatIconModule,
-    MatChipsModule,
-    MatSelectModule,
-    MatInputModule,
-    MatDatepickerModule,
-    MatNativeDateModule,
-    MatButtonToggleModule,
     MatSnackBarModule,
     MatDialogModule,
-    MatTooltipModule,
     MatProgressSpinnerModule,
     MatPaginatorModule,
-    MatMenuModule,
-    MatDividerModule,
-    MatProgressBarModule,
-    MatCheckboxModule,
     DragDropModule,
     TransactionCardComponent,
-    CategorizationProgressComponent
+    TransactionToolbarComponent,
+    TransactionFiltersComponent,
+    SelectionBarComponent,
+    SummaryBarComponent,
+    CategorySidebarComponent,
+    KeyboardHelpComponent
   ],
   template: `
     <div class="transactions-container">
-      <!-- Toolbar -->
-      <div class="toolbar">
-        <div class="toolbar-left">
-          <h1>Transactions</h1>
-          <span class="transaction-count">{{ filteredTransactions.length }} of {{ transactions.length }}</span>
-        </div>
-        <div class="toolbar-center">
-          <mat-button-toggle-group [(ngModel)]="viewMode" class="view-toggle">
-            <mat-button-toggle value="cards" matTooltip="Card View">
-              <mat-icon>view_agenda</mat-icon>
-            </mat-button-toggle>
-            <mat-button-toggle value="compact" matTooltip="Compact View">
-              <mat-icon>view_list</mat-icon>
-            </mat-button-toggle>
-          </mat-button-toggle-group>
-        </div>
-        <div class="toolbar-right">
-          <button mat-raised-button color="primary" [matMenuTriggerFor]="importMenu">
-            <mat-icon>cloud_upload</mat-icon>
-            Import
-          </button>
-          <mat-menu #importMenu>
-            <button mat-menu-item (click)="openImportDialog('csv')">
-              <mat-icon>description</mat-icon>
-              <span>Bank Statement (CSV)</span>
-            </button>
-            <button mat-menu-item (click)="openImportDialog('amazon')">
-              <mat-icon>shopping_cart</mat-icon>
-              <span>Amazon Orders</span>
-            </button>
-            <button mat-menu-item (click)="openImportDialog('paypal')">
-              <mat-icon>account_balance_wallet</mat-icon>
-              <span>PayPal Transactions</span>
-            </button>
-          </mat-menu>
-          <button mat-button (click)="toggleFilters()">
-            <mat-icon>filter_list</mat-icon>
-            Filters
-          </button>
-          <button mat-button (click)="runMatching()" [disabled]="isMatching">
-            <mat-icon>link</mat-icon>
-            Run Matching
-          </button>
-          <button mat-button (click)="openMatchingOverview()">
-            <mat-icon>dashboard</mat-icon>
-            Matching Overview
-          </button>
-          <button mat-raised-button color="accent" [matMenuTriggerFor]="categorizeMenu" [disabled]="isCategorizing">
-            <mat-icon>auto_fix_high</mat-icon>
-            Categorize
-          </button>
-          <mat-menu #categorizeMenu>
-            <button mat-menu-item (click)="categorizeSelected()" [disabled]="selectedTransactions.length === 0">
-              <mat-icon>check_box</mat-icon>
-              <span>Selected ({{ selectedTransactions.length }})</span>
-            </button>
-            <button mat-menu-item (click)="categorizeUncategorized()">
-              <mat-icon>help_outline</mat-icon>
-              <span>All Uncategorized ({{ uncategorizedCount }})</span>
-            </button>
-            <button mat-menu-item (click)="categorizeFiltered()">
-              <mat-icon>filter_list</mat-icon>
-              <span>All Filtered ({{ filteredTransactions.length }})</span>
-            </button>
-            <mat-divider></mat-divider>
-            <button mat-menu-item (click)="openCategorizationDialog()">
-              <mat-icon>visibility</mat-icon>
-              <span>View Progress</span>
-            </button>
-          </mat-menu>
-          <!-- Categorization Progress Indicator -->
-          <app-categorization-progress (openDialog)="openCategorizationDialog()"></app-categorization-progress>
-          <button mat-button (click)="exportCSV()">
-            <mat-icon>download</mat-icon>
-            Export
-          </button>
-          <button mat-button [matMenuTriggerFor]="maintenanceMenu">
-            <mat-icon>build</mat-icon>
-            Maintenance
-          </button>
-          <mat-menu #maintenanceMenu>
-            <button mat-menu-item (click)="cleanupCategories()">
-              <mat-icon>cleaning_services</mat-icon>
-              <span>Remove Generic Categories</span>
-            </button>
-            <button mat-menu-item (click)="findDuplicates()">
-              <mat-icon>content_copy</mat-icon>
-              <span>Find Duplicates</span>
-            </button>
-            <button mat-menu-item (click)="removeDuplicates()">
-              <mat-icon>delete_sweep</mat-icon>
-              <span>Remove Duplicates</span>
-            </button>
-          </mat-menu>
-        </div>
-      </div>
+      <app-transaction-toolbar
+        [totalCount]="transactions.length"
+        [filteredCount]="filteredTransactions.length"
+        [selectedCount]="selectedTransactions.length"
+        [uncategorizedCount]="uncategorizedCount"
+        [viewMode]="viewMode"
+        [isMatching]="isMatching"
+        [isCategorizing]="isCategorizing"
+        (viewModeChange)="viewMode = $event"
+        (toggleFiltersClick)="showFilters = !showFilters"
+        (importClick)="openImportDialog($event)"
+        (runMatchingClick)="runMatching()"
+        (matchingOverviewClick)="openMatchingOverview()"
+        (categorizeClick)="onCategorize($event)"
+        (viewProgressClick)="openCategorizationDialog()"
+        (exportClick)="actionsService.exportToCSV(filteredTransactions)"
+        (maintenanceClick)="onMaintenance($event)">
+      </app-transaction-toolbar>
 
-      <!-- Filters Panel -->
-      <div class="filters-panel" *ngIf="showFilters">
-        <!-- Row 1: Basic filters -->
-        <div class="filter-row">
-          <mat-form-field appearance="outline">
-            <mat-label>Search</mat-label>
-            <input matInput [(ngModel)]="filters.search" (input)="applyFilters()" placeholder="Description...">
-            <mat-icon matSuffix>search</mat-icon>
-          </mat-form-field>
+      <app-transaction-filters
+        *ngIf="showFilters"
+        [categories]="categories"
+        [sources]="sources"
+        (filtersChange)="onFiltersChange($event)">
+      </app-transaction-filters>
 
-          <mat-form-field appearance="outline">
-            <mat-label>Start Date</mat-label>
-            <input matInput [matDatepicker]="startPicker" [(ngModel)]="filters.startDate" (dateChange)="applyFilters()">
-            <mat-datepicker-toggle matSuffix [for]="startPicker"></mat-datepicker-toggle>
-            <mat-datepicker #startPicker></mat-datepicker>
-          </mat-form-field>
+      <app-selection-bar
+        [selectedCount]="selectedTransactions.length"
+        [allVisibleSelected]="allVisibleSelected"
+        [someVisibleSelected]="someVisibleSelected"
+        [isCategorizing]="isCategorizing"
+        [progressCurrent]="categorizationProgress.current"
+        [progressTotal]="categorizationProgress.total"
+        (toggleSelectAll)="toggleSelectAll($event)"
+        (clearSelection)="clearSelection()">
+      </app-selection-bar>
 
-          <mat-form-field appearance="outline">
-            <mat-label>End Date</mat-label>
-            <input matInput [matDatepicker]="endPicker" [(ngModel)]="filters.endDate" (dateChange)="applyFilters()">
-            <mat-datepicker-toggle matSuffix [for]="endPicker"></mat-datepicker-toggle>
-            <mat-datepicker #endPicker></mat-datepicker>
-          </mat-form-field>
+      <app-summary-bar
+        [totalAmount]="totalAmount"
+        [incomeTotal]="incomeTotal"
+        [expenseTotal]="expenseTotal"
+        [selectedTotal]="selectedTotal"
+        [selectedCount]="selectedTransactions.length">
+      </app-summary-bar>
 
-          <mat-form-field appearance="outline">
-            <mat-label>Category</mat-label>
-            <mat-select [(ngModel)]="filters.category" (selectionChange)="applyFilters()">
-              <mat-option [value]="''">All Categories</mat-option>
-              <mat-option value="__uncategorized__">Uncategorized</mat-option>
-              <mat-option *ngFor="let cat of categories" [value]="cat.name">{{ cat.name }}</mat-option>
-            </mat-select>
-          </mat-form-field>
-
-          <mat-form-field appearance="outline">
-            <mat-label>Type</mat-label>
-            <mat-select [(ngModel)]="filters.type" (selectionChange)="applyFilters()">
-              <mat-option [value]="''">All</mat-option>
-              <mat-option value="expense">Expenses</mat-option>
-              <mat-option value="income">Income</mat-option>
-            </mat-select>
-          </mat-form-field>
-
-          <mat-form-field appearance="outline">
-            <mat-label>Source</mat-label>
-            <mat-select [(ngModel)]="filters.source" (selectionChange)="applyFilters()">
-              <mat-option [value]="''">All Sources</mat-option>
-              <mat-option *ngFor="let source of sources" [value]="source">{{ source }}</mat-option>
-            </mat-select>
-          </mat-form-field>
-        </div>
-
-        <!-- Row 2: Enhanced filters -->
-        <div class="filter-row">
-          <mat-form-field appearance="outline" class="amount-field">
-            <mat-label>Min Amount</mat-label>
-            <input matInput type="number" [(ngModel)]="filters.amountMin" (input)="applyFilters()" placeholder="0">
-            <span matTextPrefix>€&nbsp;</span>
-          </mat-form-field>
-
-          <mat-form-field appearance="outline" class="amount-field">
-            <mat-label>Max Amount</mat-label>
-            <input matInput type="number" [(ngModel)]="filters.amountMax" (input)="applyFilters()" placeholder="∞">
-            <span matTextPrefix>€&nbsp;</span>
-          </mat-form-field>
-
-          <mat-form-field appearance="outline">
-            <mat-label>Beneficiary</mat-label>
-            <input matInput [(ngModel)]="filters.beneficiary" (input)="applyFilters()" placeholder="Filter by beneficiary...">
-          </mat-form-field>
-
-          <mat-form-field appearance="outline">
-            <mat-label>Linked</mat-label>
-            <mat-select [(ngModel)]="filters.hasMatch" (selectionChange)="applyFilters()">
-              <mat-option [value]="''">All</mat-option>
-              <mat-option value="yes">Has Links</mat-option>
-              <mat-option value="no">No Links</mat-option>
-            </mat-select>
-          </mat-form-field>
-
-          <mat-form-field appearance="outline">
-            <mat-label>External Data</mat-label>
-            <mat-select [(ngModel)]="filters.showContextOnly" (selectionChange)="applyFilters()">
-              <mat-option [value]="''">Hide External</mat-option>
-              <mat-option value="all">Show All</mat-option>
-              <mat-option value="only">Only External</mat-option>
-            </mat-select>
-          </mat-form-field>
-
-          <mat-form-field appearance="outline">
-            <mat-label>Platform</mat-label>
-            <mat-select [(ngModel)]="filters.platform" (selectionChange)="applyFilters()">
-              <mat-option [value]="''">All Platforms</mat-option>
-              <mat-divider></mat-divider>
-              <mat-option value="amazon">
-                <mat-icon class="amazon-icon">shopping_cart</mat-icon> Amazon (All)
-              </mat-option>
-              <mat-option value="amazon-unlinked">
-                <mat-icon class="warning-icon">warning</mat-icon> Amazon Unlinked
-              </mat-option>
-              <mat-divider></mat-divider>
-              <mat-option value="paypal">
-                <mat-icon class="paypal-icon">account_balance_wallet</mat-icon> PayPal (All)
-              </mat-option>
-              <mat-option value="paypal-unlinked">
-                <mat-icon class="warning-icon">warning</mat-icon> PayPal Unlinked
-              </mat-option>
-            </mat-select>
-          </mat-form-field>
-
-          <button mat-stroked-button (click)="resetFilters()">
-            <mat-icon>clear</mat-icon>
-            Reset
-          </button>
-        </div>
-
-        <!-- Row 3: Quick date buttons -->
-        <div class="quick-dates">
-          <span class="quick-dates-label">Quick:</span>
-          <button mat-stroked-button (click)="setQuickDateFilter('thisMonth')" [class.active]="isQuickDateActive('thisMonth')">
-            This Month
-          </button>
-          <button mat-stroked-button (click)="setQuickDateFilter('lastMonth')" [class.active]="isQuickDateActive('lastMonth')">
-            Last Month
-          </button>
-          <button mat-stroked-button (click)="setQuickDateFilter('thisYear')" [class.active]="isQuickDateActive('thisYear')">
-            This Year
-          </button>
-          <button mat-stroked-button (click)="setQuickDateFilter('lastYear')" [class.active]="isQuickDateActive('lastYear')">
-            Last Year
-          </button>
-          <button mat-stroked-button (click)="setQuickDateFilter('all')" [class.active]="isQuickDateActive('all')">
-            All Time
-          </button>
-        </div>
-      </div>
-
-      <!-- Selection Bar -->
-      <div class="selection-bar">
-        <mat-checkbox
-          [checked]="allVisibleSelected"
-          [indeterminate]="someVisibleSelected && !allVisibleSelected"
-          (change)="toggleSelectAll($event.checked)"
-          matTooltip="Select all visible">
-          Select All
-        </mat-checkbox>
-        <span class="selection-info" *ngIf="selectedTransactions.length > 0">
-          {{ selectedTransactions.length }} selected
-          <button mat-button (click)="clearSelection()">Clear</button>
-        </span>
-        <div class="categorization-progress" *ngIf="isCategorizing">
-          <span>Categorizing {{ categorizationProgress.current }} / {{ categorizationProgress.total }}</span>
-          <mat-progress-bar mode="determinate" [value]="(categorizationProgress.current / categorizationProgress.total) * 100"></mat-progress-bar>
-        </div>
-      </div>
-
-      <!-- Summary Bar -->
-      <div class="summary-bar">
-        <div class="summary-item">
-          <span class="label">Total</span>
-          <span class="value" [class.negative]="totalAmount < 0" [class.positive]="totalAmount > 0">
-            {{ totalAmount | currency:'EUR':'symbol':'1.2-2' }}
-          </span>
-        </div>
-        <div class="summary-item">
-          <span class="label">Income</span>
-          <span class="value positive">{{ incomeTotal | currency:'EUR':'symbol':'1.2-2' }}</span>
-        </div>
-        <div class="summary-item">
-          <span class="label">Expenses</span>
-          <span class="value negative">{{ expenseTotal | currency:'EUR':'symbol':'1.2-2' }}</span>
-        </div>
-        <div class="summary-item" *ngIf="selectedTransactions.length > 0">
-          <span class="label">Selected ({{ selectedTransactions.length }})</span>
-          <span class="value">{{ selectedTotal | currency:'EUR':'symbol':'1.2-2' }}</span>
-        </div>
-      </div>
-
-      <!-- Main Content -->
       <div class="main-content">
-        <!-- Transaction List -->
         <div class="transaction-list"
              cdkDropList
              #transactionList="cdkDropList"
-             [cdkDropListConnectedTo]="categoryDropLists"
-             [cdkDropListData]="filteredTransactions"
-             (cdkDropListDropped)="onTransactionDropped($event)">
+             [cdkDropListConnectedTo]="[]"
+             [cdkDropListData]="filteredTransactions">
 
           <div *ngIf="isLoading" class="loading">
             <mat-spinner diameter="40"></mat-spinner>
@@ -369,11 +131,8 @@ interface UndoAction {
             <p>Try adjusting your filters or import some transactions.</p>
           </div>
 
-          <ng-container *ngFor="let transaction of paginatedTransactions; let i = index; trackBy: trackByFn">
-            <div cdkDrag
-                 [cdkDragData]="transaction"
-                 class="drag-wrapper"
-                 [class.compact]="viewMode === 'compact'">
+          <ng-container *ngFor="let transaction of paginatedTransactions; trackBy: trackByFn">
+            <div cdkDrag [cdkDragData]="transaction" class="drag-wrapper" [class.compact]="viewMode === 'compact'">
               <app-transaction-card
                 [transaction]="transaction"
                 [categories]="categories"
@@ -388,23 +147,19 @@ interface UndoAction {
                 (splitTransaction)="onSplitTransaction($event)"
                 (expandChange)="onExpandChange(transaction, $event)"
                 (updateTransaction)="onUpdateTransaction($event)"
-                (askAI)="onAskAI($event)"
+                (askAI)="aiContextService.askAboutTransaction($event)"
                 (openDetail)="onEditTransaction($event)">
               </app-transaction-card>
 
-              <!-- Drag Preview -->
               <div *cdkDragPreview class="drag-preview">
                 <mat-icon>receipt</mat-icon>
                 <span>{{ transaction.description | slice:0:30 }}</span>
                 <span class="amount">{{ transaction.amount | currency:'EUR' }}</span>
               </div>
-
-              <!-- Drag Placeholder -->
               <div *cdkDragPlaceholder class="drag-placeholder"></div>
             </div>
           </ng-container>
 
-          <!-- Pagination -->
           <mat-paginator
             *ngIf="filteredTransactions.length > 0"
             [length]="filteredTransactions.length"
@@ -416,445 +171,33 @@ interface UndoAction {
           </mat-paginator>
         </div>
 
-        <!-- Category Sidebar -->
-        <div class="category-sidebar">
-          <h3>
-            <mat-icon>category</mat-icon>
-            Categories
-          </h3>
-          <p class="hint">Drag transactions here to categorize</p>
-
-          <div class="category-list">
-            <div *ngFor="let category of categories"
-                 class="category-drop-zone"
-                 cdkDropList
-                 #categoryDrop="cdkDropList"
-                 [cdkDropListData]="category"
-                 [cdkDropListConnectedTo]="[transactionList]"
-                 (cdkDropListDropped)="onDropToCategory($event, category)"
-                 [style.border-color]="category.color">
-              <div class="category-header" [style.background-color]="category.color + '20'">
-                <span class="color-dot" [style.background-color]="category.color"></span>
-                <span class="category-name">{{ category.name }}</span>
-                <span class="category-count">{{ getCategoryCount(category.name) }}</span>
-              </div>
-            </div>
-
-            <!-- Uncategorize drop zone -->
-            <div class="category-drop-zone uncategorize"
-                 cdkDropList
-                 [cdkDropListConnectedTo]="[transactionList]"
-                 (cdkDropListDropped)="onDropToUncategorize($event)">
-              <div class="category-header">
-                <mat-icon>remove_circle_outline</mat-icon>
-                <span class="category-name">Remove Category</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Quick Stats -->
-          <div class="quick-stats">
-            <h4>Quick Stats</h4>
-            <div class="stat-row" *ngFor="let stat of categoryStats | slice:0:5">
-              <span class="stat-name">{{ stat.name }}</span>
-              <span class="stat-value">{{ stat.total | currency:'EUR':'symbol':'1.0-0' }}</span>
-            </div>
-          </div>
-        </div>
+        <app-category-sidebar
+          [categories]="categories"
+          [categoryStats]="categoryStats"
+          [transactions]="filteredTransactions"
+          [connectedListIds]="['transactionList']"
+          (dropToCategory)="onDropToCategory($event.transaction, $event.category)"
+          (dropToUncategorize)="onDropToUncategorize($event)">
+        </app-category-sidebar>
       </div>
 
-      <!-- Keyboard Shortcuts Help -->
-      <div class="keyboard-help" *ngIf="showKeyboardHelp">
-        <h4>Keyboard Shortcuts</h4>
-        <div class="shortcut"><kbd>↑</kbd><kbd>↓</kbd> Navigate</div>
-        <div class="shortcut"><kbd>Enter</kbd> Expand/Collapse</div>
-        <div class="shortcut"><kbd>Space</kbd> Select</div>
-        <div class="shortcut"><kbd>1</kbd>-<kbd>9</kbd> Assign category</div>
-        <div class="shortcut"><kbd>Delete</kbd> Delete</div>
-        <div class="shortcut"><kbd>Ctrl+Z</kbd> Undo</div>
-        <div class="shortcut"><kbd>?</kbd> Toggle help</div>
-      </div>
+      <app-keyboard-help [visible]="showKeyboardHelp"></app-keyboard-help>
     </div>
   `,
   styles: [`
-    .transactions-container {
-      display: flex;
-      flex-direction: column;
-      height: 100%;
-      background: #f5f5f5;
-    }
-
-    .toolbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 16px 24px;
-      background: white;
-      border-bottom: 1px solid #e0e0e0;
-    }
-
-    .toolbar-left {
-      display: flex;
-      align-items: baseline;
-      gap: 12px;
-    }
-
-    .toolbar-left h1 {
-      margin: 0;
-      font-size: 24px;
-      font-weight: 500;
-    }
-
-    .transaction-count {
-      color: #666;
-      font-size: 14px;
-    }
-
-    .toolbar-center {
-      display: flex;
-      gap: 8px;
-    }
-
-    .toolbar-right {
-      display: flex;
-      gap: 8px;
-    }
-
-    .view-toggle {
-      border: none;
-    }
-
-    .filters-panel {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      padding: 16px 24px;
-      background: white;
-      border-bottom: 1px solid #e0e0e0;
-    }
-
-    .filter-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 12px;
-      align-items: center;
-    }
-
-    .filter-row mat-form-field {
-      flex: 1;
-      min-width: 140px;
-      max-width: 180px;
-    }
-
-    .filter-row .amount-field {
-      max-width: 120px;
-    }
-
-    .quick-dates {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      align-items: center;
-    }
-
-    .quick-dates-label {
-      font-size: 13px;
-      color: #666;
-      margin-right: 4px;
-    }
-
-    .quick-dates button {
-      font-size: 12px;
-    }
-
-    .quick-dates button.active {
-      background-color: #1976d2;
-      color: white;
-    }
-
-    .selection-bar {
-      display: flex;
-      align-items: center;
-      gap: 16px;
-      padding: 8px 24px;
-      background: #e3f2fd;
-      border-bottom: 1px solid #bbdefb;
-    }
-
-    .selection-info {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 14px;
-      color: #1976d2;
-    }
-
-    .categorization-progress {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      margin-left: auto;
-      font-size: 13px;
-      color: #666;
-    }
-
-    .categorization-progress mat-progress-bar {
-      width: 200px;
-    }
-
-    .summary-bar {
-      display: flex;
-      gap: 32px;
-      padding: 12px 24px;
-      background: #fafafa;
-      border-bottom: 1px solid #e0e0e0;
-    }
-
-    .summary-item {
-      display: flex;
-      flex-direction: column;
-    }
-
-    .summary-item .label {
-      font-size: 12px;
-      color: #666;
-      text-transform: uppercase;
-    }
-
-    .summary-item .value {
-      font-size: 18px;
-      font-weight: 600;
-      font-family: 'Roboto Mono', monospace;
-    }
-
-    .summary-item .value.negative {
-      color: #d32f2f;
-    }
-
-    .summary-item .value.positive {
-      color: #388e3c;
-    }
-
-    .main-content {
-      display: flex;
-      flex: 1;
-      overflow: hidden;
-    }
-
-    .transaction-list {
-      flex: 1;
-      overflow-y: auto;
-      padding: 16px 24px;
-    }
-
-    .loading, .empty-state {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 48px;
-      color: #666;
-    }
-
-    .empty-state mat-icon {
-      font-size: 64px;
-      width: 64px;
-      height: 64px;
-      color: #ccc;
-    }
-
-    .empty-state h3 {
-      margin: 16px 0 8px;
-    }
-
-    .drag-wrapper {
-      margin-bottom: 8px;
-    }
-
-    .drag-wrapper.compact app-transaction-card {
-      padding: 8px 12px;
-    }
-
-    .drag-preview {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 12px 16px;
-      background: white;
-      border-radius: 8px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-      font-size: 14px;
-    }
-
-    .drag-preview .amount {
-      margin-left: auto;
-      font-weight: 600;
-    }
-
-    .drag-placeholder {
-      height: 60px;
-      background: #e3f2fd;
-      border: 2px dashed #1976d2;
-      border-radius: 8px;
-      margin-bottom: 8px;
-    }
-
-    .category-sidebar {
-      width: 280px;
-      background: white;
-      border-left: 1px solid #e0e0e0;
-      padding: 16px;
-      overflow-y: auto;
-    }
-
-    .category-sidebar h3 {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin: 0 0 8px;
-      font-size: 16px;
-    }
-
-    .category-sidebar .hint {
-      color: #666;
-      font-size: 12px;
-      margin: 0 0 16px;
-    }
-
-    .category-list {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-
-    .category-drop-zone {
-      border: 2px dashed #e0e0e0;
-      border-radius: 8px;
-      transition: all 0.2s;
-    }
-
-    .category-drop-zone:hover,
-    .category-drop-zone.cdk-drop-list-dragging {
-      border-style: solid;
-      background: #f5f5f5;
-    }
-
-    .category-header {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 10px 12px;
-      border-radius: 6px;
-    }
-
-    .color-dot {
-      width: 12px;
-      height: 12px;
-      border-radius: 50%;
-    }
-
-    .category-name {
-      flex: 1;
-      font-size: 14px;
-      font-weight: 500;
-    }
-
-    .category-count {
-      font-size: 12px;
-      color: #666;
-      background: #f0f0f0;
-      padding: 2px 8px;
-      border-radius: 12px;
-    }
-
-    .category-drop-zone.uncategorize {
-      border-color: #ffcdd2;
-      margin-top: 16px;
-    }
-
-    .category-drop-zone.uncategorize .category-header {
-      color: #c62828;
-    }
-
-    .quick-stats {
-      margin-top: 24px;
-      padding-top: 16px;
-      border-top: 1px solid #e0e0e0;
-    }
-
-    .quick-stats h4 {
-      margin: 0 0 12px;
-      font-size: 14px;
-      color: #666;
-    }
-
-    .stat-row {
-      display: flex;
-      justify-content: space-between;
-      padding: 6px 0;
-      font-size: 13px;
-    }
-
-    .stat-name {
-      color: #333;
-    }
-
-    .stat-value {
-      font-weight: 500;
-      font-family: 'Roboto Mono', monospace;
-    }
-
-    .keyboard-help {
-      position: fixed;
-      bottom: 16px;
-      right: 16px;
-      background: rgba(0,0,0,0.85);
-      color: white;
-      padding: 16px;
-      border-radius: 8px;
-      font-size: 13px;
-      z-index: 1000;
-    }
-
-    .keyboard-help h4 {
-      margin: 0 0 12px;
-      font-size: 14px;
-    }
-
-    .shortcut {
-      display: flex;
-      gap: 8px;
-      margin-bottom: 8px;
-    }
-
-    kbd {
-      background: #555;
-      padding: 2px 6px;
-      border-radius: 4px;
-      font-family: monospace;
-    }
-
-    /* CDK drag styles */
-    .cdk-drag-animating {
-      transition: transform 250ms cubic-bezier(0, 0, 0.2, 1);
-    }
-
-    .cdk-drop-list-dragging .drag-wrapper:not(.cdk-drag-placeholder) {
-      transition: transform 250ms cubic-bezier(0, 0, 0.2, 1);
-    }
-
-    /* Platform filter icons */
-    .amazon-icon {
-      color: #ff9800 !important;
-    }
-
-    .paypal-icon {
-      color: #0070ba !important;
-    }
-
-    .warning-icon {
-      color: #ff9800 !important;
-    }
+    .transactions-container { display: flex; flex-direction: column; height: 100%; background: #f5f5f5; }
+    .main-content { display: flex; flex: 1; overflow: hidden; }
+    .transaction-list { flex: 1; overflow-y: auto; padding: 16px 24px; }
+    .loading, .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 48px; color: #666; }
+    .empty-state mat-icon { font-size: 64px; width: 64px; height: 64px; color: #ccc; }
+    .empty-state h3 { margin: 16px 0 8px; }
+    .drag-wrapper { margin-bottom: 8px; }
+    .drag-wrapper.compact app-transaction-card { padding: 8px 12px; }
+    .drag-preview { display: flex; align-items: center; gap: 8px; padding: 12px 16px; background: white; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); font-size: 14px; }
+    .drag-preview .amount { margin-left: auto; font-weight: 600; }
+    .drag-placeholder { height: 60px; background: #e3f2fd; border: 2px dashed #1976d2; border-radius: 8px; margin-bottom: 8px; }
+    .cdk-drag-animating { transition: transform 250ms cubic-bezier(0, 0, 0.2, 1); }
+    .cdk-drop-list-dragging .drag-wrapper:not(.cdk-drag-placeholder) { transition: transform 250ms cubic-bezier(0, 0, 0.2, 1); }
   `]
 })
 export class TransactionsComponent implements OnInit, OnDestroy {
@@ -871,32 +214,6 @@ export class TransactionsComponent implements OnInit, OnDestroy {
   isCategorizing = false;
   categorizationProgress = { current: 0, total: 0 };
 
-  filters = {
-    search: '',
-    startDate: undefined as Date | undefined,
-    endDate: undefined as Date | undefined,
-    category: '',
-    type: '',
-    source: '',
-    // Enhanced filters
-    amountMin: undefined as number | undefined,
-    amountMax: undefined as number | undefined,
-    beneficiary: '',
-    hasMatch: '' as '' | 'yes' | 'no',
-    showContextOnly: '' as '' | 'all' | 'only', // Filter context-only (Amazon/PayPal) transactions
-    platform: '' as '' | 'amazon' | 'paypal' | 'amazon-unlinked' | 'paypal-unlinked' // Platform filter
-  };
-
-  // Platform detection patterns (same as in transaction-card)
-  private readonly AMAZON_PATTERNS = [
-    /amazon/i, /amzn/i, /amazon\.de/i, /amazon\s+payments/i,
-    /amazon\s+eu/i, /amz\*|amzn\*/i, /amazon\s+prime/i, /prime\s+video/i
-  ];
-  private readonly PAYPAL_PATTERNS = [
-    /paypal/i, /pp\s*\*/i, /paypal\s*\(europe\)/i, /paypal\s*pte/i, /paypal\s*europe/i
-  ];
-
-  // Pagination
   pageSize = 50;
   pageIndex = 0;
   pageSizeOptions = [25, 50, 100, 250];
@@ -905,271 +222,64 @@ export class TransactionsComponent implements OnInit, OnDestroy {
   expandedIds = new Set<string>();
   focusedIndex = -1;
 
-  undoStack: UndoAction[] = [];
-
-  categoryDropLists: CdkDropList[] = [];
-
   private subscriptions: Subscription[] = [];
+  private currentFilters: TransactionFilters;
 
   constructor(
     private transactionService: TransactionService,
     private categoryService: CategoryService,
-    private aiContextService: AIContextService,
-    private aiService: AIService,
-    private categorizationService: CategorizationService,
+    public aiContextService: AIContextService,
+    private filterService: TransactionFilterService,
+    private selectionService: TransactionSelectionService,
+    private undoService: TransactionUndoService,
+    public actionsService: TransactionActionsService,
+    private keyboardService: TransactionKeyboardService,
     private snackBar: MatSnackBar,
     private dialog: MatDialog
-  ) {}
-
-  ngOnInit() {
-    this.loadData();
+  ) {
+    this.currentFilters = this.filterService.getDefaultFilters();
   }
 
-  ngOnDestroy() {
+  ngOnInit(): void {
+    this.loadData();
+    this.subscriptions.push(
+      this.keyboardService.action$.subscribe(event => this.handleKeyboardAction(event))
+    );
+  }
+
+  ngOnDestroy(): void {
     this.subscriptions.forEach(sub => sub.unsubscribe());
   }
 
-  async loadData() {
+  async loadData(): Promise<void> {
     this.isLoading = true;
-
-    // Subscribe to categories
-    const catSub = this.categoryService.categories$.subscribe(categories => {
-      this.categories = categories;
-    });
-    this.subscriptions.push(catSub);
-
-    // Subscribe to transactions
-    const sub = this.transactionService.transactions$.subscribe(transactions => {
-      this.transactions = transactions;
-      this.applyFilters();
-      this.extractSources();
-      this.isLoading = false;
-    });
-    this.subscriptions.push(sub);
+    this.subscriptions.push(
+      this.categoryService.categories$.subscribe(c => this.categories = c),
+      this.transactionService.transactions$.subscribe(t => {
+        this.transactions = t;
+        this.applyFilters();
+        this.extractSources();
+        this.isLoading = false;
+      })
+    );
   }
 
-  extractSources() {
+  private extractSources(): void {
     const sourceSet = new Set<string>();
-    this.transactions.forEach(t => {
-      if (t.source?.connectorType) {
-        sourceSet.add(t.source.connectorType);
-      }
-    });
+    this.transactions.forEach(t => t.source?.connectorType && sourceSet.add(t.source.connectorType));
     this.sources = Array.from(sourceSet);
   }
 
-  applyFilters() {
-    let result = [...this.transactions];
-
-    if (this.filters.search) {
-      const search = this.filters.search.toLowerCase();
-      result = result.filter(t =>
-        t.description.toLowerCase().includes(search) ||
-        t.beneficiary?.toLowerCase().includes(search)
-      );
-    }
-
-    if (this.filters.startDate) {
-      result = result.filter(t => new Date(t.date) >= this.filters.startDate!);
-    }
-
-    if (this.filters.endDate) {
-      result = result.filter(t => new Date(t.date) <= this.filters.endDate!);
-    }
-
-    if (this.filters.category) {
-      if (this.filters.category === '__uncategorized__') {
-        result = result.filter(t => !t.category);
-      } else {
-        result = result.filter(t => t.category === this.filters.category);
-      }
-    }
-
-    if (this.filters.type) {
-      if (this.filters.type === 'expense') {
-        result = result.filter(t => t.amount < 0);
-      } else if (this.filters.type === 'income') {
-        result = result.filter(t => t.amount > 0);
-      }
-    }
-
-    if (this.filters.source) {
-      result = result.filter(t => t.source?.connectorType === this.filters.source);
-    }
-
-    // Enhanced filters
-    if (this.filters.amountMin !== undefined && this.filters.amountMin !== null) {
-      result = result.filter(t => Math.abs(t.amount) >= this.filters.amountMin!);
-    }
-
-    if (this.filters.amountMax !== undefined && this.filters.amountMax !== null) {
-      result = result.filter(t => Math.abs(t.amount) <= this.filters.amountMax!);
-    }
-
-    if (this.filters.beneficiary) {
-      const beneficiary = this.filters.beneficiary.toLowerCase();
-      result = result.filter(t => t.beneficiary?.toLowerCase().includes(beneficiary));
-    }
-
-    if (this.filters.hasMatch === 'yes') {
-      result = result.filter(t => t.matchInfo || (t.linkedOrderIds && t.linkedOrderIds.length > 0));
-    } else if (this.filters.hasMatch === 'no') {
-      result = result.filter(t => !t.matchInfo && (!t.linkedOrderIds || t.linkedOrderIds.length === 0));
-    }
-
-    // Platform filter - takes precedence over external data filter for unlinked views
-    if (this.filters.platform) {
-      if (this.filters.platform === 'amazon') {
-        // All Amazon-related (bank charges + orders) - apply external data filter
-        result = result.filter(t =>
-          this.detectPlatform(t) === 'amazon' ||
-          (t.isContextOnly && t.source?.connectorType === 'amazon')
-        );
-        // Then apply external data filter
-        if (this.filters.showContextOnly === '') {
-          result = result.filter(t => !t.isContextOnly);
-        } else if (this.filters.showContextOnly === 'only') {
-          result = result.filter(t => t.isContextOnly);
-        }
-      } else if (this.filters.platform === 'paypal') {
-        // All PayPal-related (bank charges + imports) - apply external data filter
-        result = result.filter(t =>
-          this.detectPlatform(t) === 'paypal' ||
-          (t.isContextOnly && t.source?.connectorType === 'paypal')
-        );
-        // Then apply external data filter
-        if (this.filters.showContextOnly === '') {
-          result = result.filter(t => !t.isContextOnly);
-        } else if (this.filters.showContextOnly === 'only') {
-          result = result.filter(t => t.isContextOnly);
-        }
-      } else if (this.filters.platform === 'amazon-unlinked') {
-        // Amazon bank charges without linked orders - IGNORES external data filter
-        // Must start from full transaction list to find bank transactions
-        result = this.transactions.filter(t =>
-          this.detectPlatform(t) === 'amazon' &&
-          !t.isContextOnly &&
-          (!t.linkedOrderIds || t.linkedOrderIds.length === 0)
-        );
-        // Re-apply other filters (except showContextOnly)
-        result = this.applyNonContextFilters(result);
-      } else if (this.filters.platform === 'paypal-unlinked') {
-        // PayPal bank charges without linked imports - IGNORES external data filter
-        // Must start from full transaction list to find bank transactions
-        result = this.transactions.filter(t =>
-          this.detectPlatform(t) === 'paypal' &&
-          !t.isContextOnly &&
-          (!t.linkedOrderIds || t.linkedOrderIds.length === 0)
-        );
-        // Re-apply other filters (except showContextOnly)
-        result = this.applyNonContextFilters(result);
-      }
-    } else {
-      // No platform filter - apply external data filter normally
-      if (this.filters.showContextOnly === '') {
-        result = result.filter(t => !t.isContextOnly);
-      } else if (this.filters.showContextOnly === 'only') {
-        result = result.filter(t => t.isContextOnly);
-      }
-      // 'all' shows everything, no filter applied
-    }
-
-    // Sort by date descending
-    result.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-
-    this.filteredTransactions = result;
-    // Reset to first page when filters change
-    this.pageIndex = 0;
-  }
-
-  resetFilters() {
-    this.filters = {
-      search: '',
-      startDate: undefined,
-      endDate: undefined,
-      category: '',
-      type: '',
-      source: '',
-      amountMin: undefined,
-      amountMax: undefined,
-      beneficiary: '',
-      hasMatch: '',
-      showContextOnly: '', // Default: hide context-only (Amazon/PayPal external data)
-      platform: ''
-    };
-    this.pageIndex = 0;
+  // Filters
+  onFiltersChange(filters: TransactionFilters): void {
+    this.currentFilters = filters;
     this.applyFilters();
   }
 
-  // Helper method to apply filters except showContextOnly (for platform unlinked filters)
-  private applyNonContextFilters(result: Transaction[]): Transaction[] {
-    if (this.filters.search) {
-      const search = this.filters.search.toLowerCase();
-      result = result.filter(t =>
-        t.description.toLowerCase().includes(search) ||
-        t.beneficiary?.toLowerCase().includes(search)
-      );
-    }
-
-    if (this.filters.startDate) {
-      result = result.filter(t => new Date(t.date) >= this.filters.startDate!);
-    }
-
-    if (this.filters.endDate) {
-      result = result.filter(t => new Date(t.date) <= this.filters.endDate!);
-    }
-
-    if (this.filters.category) {
-      if (this.filters.category === '__uncategorized__') {
-        result = result.filter(t => !t.category);
-      } else {
-        result = result.filter(t => t.category === this.filters.category);
-      }
-    }
-
-    if (this.filters.type) {
-      if (this.filters.type === 'expense') {
-        result = result.filter(t => t.amount < 0);
-      } else if (this.filters.type === 'income') {
-        result = result.filter(t => t.amount > 0);
-      }
-    }
-
-    if (this.filters.amountMin !== undefined && this.filters.amountMin !== null) {
-      result = result.filter(t => Math.abs(t.amount) >= this.filters.amountMin!);
-    }
-
-    if (this.filters.amountMax !== undefined && this.filters.amountMax !== null) {
-      result = result.filter(t => Math.abs(t.amount) <= this.filters.amountMax!);
-    }
-
-    if (this.filters.beneficiary) {
-      const beneficiary = this.filters.beneficiary.toLowerCase();
-      result = result.filter(t => t.beneficiary?.toLowerCase().includes(beneficiary));
-    }
-
-    return result;
-  }
-
-  // Helper method to detect platform for a transaction
-  private detectPlatform(tx: Transaction): 'amazon' | 'paypal' | null {
-    if (tx.isContextOnly) {
-      const connectorType = tx.source?.connectorType;
-      if (connectorType === 'amazon') return 'amazon';
-      if (connectorType === 'paypal') return 'paypal';
-      return null;
-    }
-
-    // Check detectedPlatform field first
-    if (tx.detectedPlatform) {
-      return tx.detectedPlatform;
-    }
-
-    // Fallback: detect from description/beneficiary
-    const searchText = `${tx.description} ${tx.beneficiary || ''}`.toLowerCase();
-    if (this.AMAZON_PATTERNS.some(p => p.test(searchText))) return 'amazon';
-    if (this.PAYPAL_PATTERNS.some(p => p.test(searchText))) return 'paypal';
-    return null;
+  private applyFilters(): void {
+    this.filteredTransactions = this.filterService.applyFilters(this.transactions, this.currentFilters);
+    this.filteredTransactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    this.pageIndex = 0;
   }
 
   // Pagination
@@ -1178,712 +288,313 @@ export class TransactionsComponent implements OnInit, OnDestroy {
     return this.filteredTransactions.slice(start, start + this.pageSize);
   }
 
-  onPageChange(event: PageEvent) {
+  onPageChange(event: PageEvent): void {
     this.pageIndex = event.pageIndex;
     this.pageSize = event.pageSize;
   }
 
-  // Quick date filters
-  setQuickDateFilter(period: 'thisMonth' | 'lastMonth' | 'thisYear' | 'lastYear' | 'all') {
-    const now = new Date();
-    switch (period) {
-      case 'thisMonth':
-        this.filters.startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-        this.filters.endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-        break;
-      case 'lastMonth':
-        this.filters.startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        this.filters.endDate = new Date(now.getFullYear(), now.getMonth(), 0);
-        break;
-      case 'thisYear':
-        this.filters.startDate = new Date(now.getFullYear(), 0, 1);
-        this.filters.endDate = new Date(now.getFullYear(), 11, 31);
-        break;
-      case 'lastYear':
-        this.filters.startDate = new Date(now.getFullYear() - 1, 0, 1);
-        this.filters.endDate = new Date(now.getFullYear() - 1, 11, 31);
-        break;
-      case 'all':
-        this.filters.startDate = undefined;
-        this.filters.endDate = undefined;
-        break;
-    }
-    this.applyFilters();
-  }
-
-  isQuickDateActive(period: 'thisMonth' | 'lastMonth' | 'thisYear' | 'lastYear' | 'all'): boolean {
-    if (!this.filters.startDate && !this.filters.endDate) {
-      return period === 'all';
-    }
-    if (!this.filters.startDate || !this.filters.endDate) {
-      return false;
-    }
-    const now = new Date();
-    const start = this.filters.startDate;
-    const end = this.filters.endDate;
-
-    switch (period) {
-      case 'thisMonth':
-        return start.getMonth() === now.getMonth() && start.getFullYear() === now.getFullYear() &&
-               end.getMonth() === now.getMonth() && end.getFullYear() === now.getFullYear();
-      case 'lastMonth':
-        const lastMonth = now.getMonth() === 0 ? 11 : now.getMonth() - 1;
-        const lastMonthYear = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
-        return start.getMonth() === lastMonth && start.getFullYear() === lastMonthYear;
-      case 'thisYear':
-        return start.getFullYear() === now.getFullYear() && start.getMonth() === 0 &&
-               end.getFullYear() === now.getFullYear() && end.getMonth() === 11;
-      case 'lastYear':
-        return start.getFullYear() === now.getFullYear() - 1 && start.getMonth() === 0 &&
-               end.getFullYear() === now.getFullYear() - 1 && end.getMonth() === 11;
-      default:
-        return false;
-    }
-  }
-
-  toggleFilters() {
-    this.showFilters = !this.showFilters;
-  }
-
   // Selection
-  onSelectTransaction(transaction: Transaction, event: any) {
-    if (event?.ctrlKey || event?.metaKey) {
-      // Multi-select with Ctrl/Cmd
-      const index = this.selectedTransactions.findIndex(t => t.id === transaction.id);
-      if (index >= 0) {
-        this.selectedTransactions.splice(index, 1);
-      } else {
-        this.selectedTransactions.push(transaction);
-      }
-    } else if (event?.shiftKey && this.selectedTransactions.length > 0) {
-      // Range select with Shift
-      const lastSelected = this.selectedTransactions[this.selectedTransactions.length - 1];
-      const startIndex = this.filteredTransactions.findIndex(t => t.id === lastSelected.id);
-      const endIndex = this.filteredTransactions.findIndex(t => t.id === transaction.id);
-      const [from, to] = startIndex < endIndex ? [startIndex, endIndex] : [endIndex, startIndex];
-      this.selectedTransactions = this.filteredTransactions.slice(from, to + 1);
-    } else {
-      // Single select
-      this.selectedTransactions = [transaction];
-    }
-    this.focusedIndex = this.filteredTransactions.findIndex(t => t.id === transaction.id);
-  }
-
-  isSelected(transaction: Transaction): boolean {
-    return this.selectedTransactions.some(t => t.id === transaction.id);
-  }
-
-  // Expand/Collapse
-  onExpandChange(transaction: Transaction, expanded: boolean) {
-    if (expanded) {
-      this.expandedIds.add(transaction.id);
-    } else {
-      this.expandedIds.delete(transaction.id);
-    }
-  }
-
-  // Drag & Drop
-  onTransactionDropped(event: CdkDragDrop<Transaction[]>) {
-    if (event.previousContainer === event.container) {
-      // Reorder within list (not implemented for now)
-    }
-  }
-
-  onDropToCategory(event: CdkDragDrop<Category>, category: Category) {
-    const transaction = event.item.data as Transaction;
-    const previousCategory = transaction.category;
-
-    // Save undo action
-    this.pushUndo({
-      type: 'category',
-      data: { transaction, previousCategory },
-      description: `Changed category from "${previousCategory || 'None'}" to "${category.name}"`
-    });
-
-    // Update transaction
-    transaction.category = category.name;
-    this.transactionService.updateTransaction(transaction);
-
-    this.snackBar.open(`Moved to ${category.name}`, 'Undo', { duration: 3000 })
-      .onAction().subscribe(() => this.undo());
-  }
-
-  onDropToUncategorize(event: CdkDragDrop<any>) {
-    const transaction = event.item.data as Transaction;
-    const previousCategory = transaction.category;
-
-    this.pushUndo({
-      type: 'category',
-      data: { transaction, previousCategory },
-      description: `Removed category "${previousCategory}"`
-    });
-
-    transaction.category = undefined;
-    this.transactionService.updateTransaction(transaction);
-
-    this.snackBar.open('Category removed', 'Undo', { duration: 3000 })
-      .onAction().subscribe(() => this.undo());
-  }
-
-  // Transaction actions
-  onUpdateTransaction(transaction: Transaction) {
-    this.transactionService.updateTransaction(transaction);
-    this.snackBar.open('Transaction updated', '', { duration: 2000 });
-  }
-
-  onEditTransaction(transaction: Transaction) {
-    // Get linked transactions if this transaction has matches
-    let linkedTransactions: Transaction[] = [];
-    if (transaction.matchInfo?.linkedTransactionIds) {
-      linkedTransactions = this.transactions.filter(t =>
-        transaction.matchInfo!.linkedTransactionIds.includes(t.id)
-      );
-    }
-
-    // Get linked orders (Amazon orders) if this transaction has any
-    let linkedOrders: Transaction[] = [];
-    if (transaction.linkedOrderIds?.length) {
-      linkedOrders = this.transactions.filter(t =>
-        transaction.linkedOrderIds!.includes(t.id)
-      );
-    }
-
-    const dialogRef = this.dialog.open(TransactionDetailDialogComponent, {
-      width: '800px',
-      maxWidth: '95vw',
-      maxHeight: '90vh',
-      data: {
-        transaction: transaction,
-        categories: this.categories,
-        linkedTransactions: linkedTransactions,
-        linkedOrders: linkedOrders
-      }
-    });
-
-    dialogRef.afterClosed().subscribe((result: TransactionDetailDialogResult) => {
-      if (!result) return;
-
-      switch (result.action) {
-        case 'save':
-          if (result.transaction) {
-            this.transactionService.updateTransaction(result.transaction);
-            this.snackBar.open('Transaction updated', '', { duration: 2000 });
-          }
-          break;
-        case 'delete':
-          this.onDeleteTransaction(transaction);
-          break;
-        case 'split':
-          this.onSplitTransaction(transaction);
-          break;
-        case 'merge':
-          this.onMergeTransaction(transaction);
-          break;
-        case 'askAI':
-          this.aiContextService.askAboutTransaction(transaction);
-          break;
-      }
-    });
-  }
-
-  onDeleteTransaction(transaction: Transaction) {
-    const previousData = { ...transaction };
-
-    this.pushUndo({
-      type: 'delete',
-      data: previousData,
-      description: `Deleted "${transaction.description}"`
-    });
-
-    this.transactionService.deleteTransaction(transaction.id);
-    this.selectedTransactions = this.selectedTransactions.filter(t => t.id !== transaction.id);
-
-    this.snackBar.open('Transaction deleted', 'Undo', { duration: 3000 })
-      .onAction().subscribe(() => this.undo());
-  }
-
-  onMergeTransaction(transaction: Transaction) {
-    const dialogRef = this.dialog.open(MergeDialogComponent, {
-      width: '600px',
-      data: {
-        sourceTransaction: transaction,
-        transactions: this.filteredTransactions.filter(t => t.id !== transaction.id)
-      }
-    });
-
-    dialogRef.afterClosed().subscribe(result => {
-      if (result) {
-        // Handle merge
-        this.snackBar.open('Transactions merged', '', { duration: 2000 });
-      }
-    });
-  }
-
-  onSplitTransaction(transaction: Transaction) {
-    const dialogRef = this.dialog.open(SplitDialogComponent, {
-      width: '500px',
-      data: { transaction, categories: this.categories }
-    });
-
-    dialogRef.afterClosed().subscribe(result => {
-      if (result) {
-        // Handle split
-        this.snackBar.open('Transaction split', '', { duration: 2000 });
-      }
-    });
-  }
-
-  // Matching
-  async runMatching() {
-    this.isMatching = true;
-    try {
-      // Run transaction matching, Amazon order matching, and PayPal matching
-      const [matchingResponse, orderMatchingResponse, paypalMatchingResponse] = await Promise.all([
-        fetch('http://localhost:3000/matching/run', { method: 'POST' }),
-        fetch('http://localhost:3000/order-matching/run', { method: 'POST' }),
-        fetch('http://localhost:3000/paypal-matching/run', { method: 'POST' })
-      ]);
-
-      const matchingResult = await matchingResponse.json();
-      const orderMatchingResult = await orderMatchingResponse.json();
-      const paypalMatchingResult = await paypalMatchingResponse.json();
-
-      const totalMatches = (matchingResult.newMatches || 0) +
-        (orderMatchingResult.autoMatched || 0) +
-        (paypalMatchingResult.autoMatched || 0);
-      const totalSuggestions = (matchingResult.suggestions || 0) +
-        (orderMatchingResult.suggestions || 0) +
-        (paypalMatchingResult.suggestions || 0);
-
-      this.snackBar.open(
-        `Matching complete: ${totalMatches} auto-matches, ${totalSuggestions} suggestions`,
-        '',
-        { duration: 4000 }
-      );
-      // Reload transactions
-      await this.transactionService.loadTransactions();
-    } catch (error) {
-      console.error('Matching error:', error);
-      this.snackBar.open('Matching failed', '', { duration: 3000 });
-    }
-    this.isMatching = false;
-  }
-
-  // Open Matching Overview Dialog
-  openMatchingOverview() {
-    const dialogRef = this.dialog.open(MatchingOverviewDialogComponent, {
-      width: '90vw',
-      maxWidth: '1600px',
-      height: '90vh',
-      maxHeight: '90vh',
-      data: { transactions: this.transactions }
-    });
-
-    dialogRef.afterClosed().subscribe(() => {
-      // Reload transactions to reflect any changes made in the dialog
-      this.transactionService.loadTransactions();
-    });
-  }
-
-  // Export
-  exportCSV() {
-    const csv = this.transactionService.exportToCSV(this.filteredTransactions);
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'transactions.csv';
-    a.click();
-    window.URL.revokeObjectURL(url);
-  }
-
-  // Import
-  openImportDialog(type: 'csv' | 'amazon' | 'paypal') {
-    const dialogRef = this.dialog.open(ImportDialogComponent, {
-      width: '700px',
-      maxHeight: '90vh',
-      data: { initialTab: type, categories: this.categories }
-    });
-
-    dialogRef.afterClosed().subscribe((result: ImportDialogResult) => {
-      if (result?.imported) {
-        this.snackBar.open(
-          `Imported ${result.count} transaction(s)`,
-          '',
-          { duration: 3000 }
-        );
-        // Reload transactions
-        this.transactionService.loadTransactions();
-      }
-    });
-  }
-
-  // Undo
-  pushUndo(action: UndoAction) {
-    this.undoStack.push(action);
-    if (this.undoStack.length > 50) {
-      this.undoStack.shift();
-    }
-  }
-
-  undo() {
-    const action = this.undoStack.pop();
-    if (!action) return;
-
-    switch (action.type) {
-      case 'category':
-        action.data.transaction.category = action.data.previousCategory;
-        this.transactionService.updateTransaction(action.data.transaction);
-        break;
-      case 'delete':
-        // Would need to re-create - simplified here
-        this.snackBar.open('Undo delete not fully implemented', '', { duration: 2000 });
-        break;
-    }
-  }
-
-  // Computed values
-  get totalAmount(): number {
-    return this.filteredTransactions.reduce((sum, t) => sum + t.amount, 0);
-  }
-
-  get incomeTotal(): number {
-    return this.filteredTransactions.filter(t => t.amount > 0).reduce((sum, t) => sum + t.amount, 0);
-  }
-
-  get expenseTotal(): number {
-    return this.filteredTransactions.filter(t => t.amount < 0).reduce((sum, t) => sum + t.amount, 0);
-  }
-
-  get selectedTotal(): number {
-    return this.selectedTransactions.reduce((sum, t) => sum + t.amount, 0);
-  }
-
-  get uncategorizedCount(): number {
-    return this.filteredTransactions.filter(t => !t.category && !t.isContextOnly).length;
-  }
-
   get allVisibleSelected(): boolean {
-    return this.paginatedTransactions.length > 0 &&
-           this.paginatedTransactions.every(t => this.isSelected(t));
+    return this.paginatedTransactions.length > 0 && this.paginatedTransactions.every(t => this.isSelected(t));
   }
 
   get someVisibleSelected(): boolean {
     return this.paginatedTransactions.some(t => this.isSelected(t));
   }
 
-  get categoryStats(): { name: string; total: number }[] {
-    const stats = new Map<string, number>();
-    this.filteredTransactions.forEach(t => {
-      if (t.category && t.amount < 0) {
-        stats.set(t.category, (stats.get(t.category) || 0) + Math.abs(t.amount));
-      }
-    });
-    return Array.from(stats.entries())
-      .map(([name, total]) => ({ name, total }))
-      .sort((a, b) => b.total - a.total);
+  isSelected(transaction: Transaction): boolean {
+    return this.selectedTransactions.some(t => t.id === transaction.id);
   }
 
-  getCategoryCount(categoryName: string): number {
-    return this.filteredTransactions.filter(t => t.category === categoryName).length;
-  }
-
-  trackByFn(index: number, transaction: Transaction): string {
-    return transaction.id;
-  }
-
-  // Keyboard navigation
-  @HostListener('window:keydown', ['$event'])
-  onGlobalKeyDown(event: KeyboardEvent) {
-    // Check if we're in an input
-    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
-      return;
-    }
-
-    switch (event.key) {
-      case 'ArrowDown':
-        event.preventDefault();
-        this.navigateDown();
-        break;
-      case 'ArrowUp':
-        event.preventDefault();
-        this.navigateUp();
-        break;
-      case ' ':
-        event.preventDefault();
-        this.toggleSelection();
-        break;
-      case 'Enter':
-        this.toggleExpand();
-        break;
-      case '?':
-        this.showKeyboardHelp = !this.showKeyboardHelp;
-        break;
-      case 'z':
-        if (event.ctrlKey || event.metaKey) {
-          event.preventDefault();
-          this.undo();
-        }
-        break;
-      default:
-        // Number keys 1-9 for quick category assignment
-        if (/^[1-9]$/.test(event.key) && this.selectedTransactions.length > 0) {
-          const categoryIndex = parseInt(event.key) - 1;
-          if (categoryIndex < this.categories.length) {
-            this.assignCategoryToSelected(this.categories[categoryIndex]);
-          }
-        }
-    }
-  }
-
-  navigateDown() {
-    if (this.focusedIndex < this.filteredTransactions.length - 1) {
-      this.focusedIndex++;
-      this.selectedTransactions = [this.filteredTransactions[this.focusedIndex]];
-    }
-  }
-
-  navigateUp() {
-    if (this.focusedIndex > 0) {
-      this.focusedIndex--;
-      this.selectedTransactions = [this.filteredTransactions[this.focusedIndex]];
-    }
-  }
-
-  toggleSelection() {
-    if (this.focusedIndex >= 0) {
-      const transaction = this.filteredTransactions[this.focusedIndex];
-      const index = this.selectedTransactions.findIndex(t => t.id === transaction.id);
-      if (index >= 0) {
-        this.selectedTransactions.splice(index, 1);
-      } else {
-        this.selectedTransactions.push(transaction);
-      }
-    }
-  }
-
-  toggleExpand() {
-    if (this.focusedIndex >= 0) {
-      const transaction = this.filteredTransactions[this.focusedIndex];
-      if (this.expandedIds.has(transaction.id)) {
-        this.expandedIds.delete(transaction.id);
-      } else {
-        this.expandedIds.add(transaction.id);
-      }
-    }
-  }
-
-  assignCategoryToSelected(category: Category) {
-    this.selectedTransactions.forEach(transaction => {
-      transaction.category = category.name;
-      this.transactionService.updateTransaction(transaction);
-    });
-    this.snackBar.open(`Assigned "${category.name}" to ${this.selectedTransactions.length} transactions`, '', { duration: 2000 });
-  }
-
-  // Selection methods
-  onToggleSelect(event: { transaction: Transaction; selected: boolean }) {
-    if (event.selected) {
-      if (!this.isSelected(event.transaction)) {
-        this.selectedTransactions.push(event.transaction);
-      }
+  onSelectTransaction(transaction: Transaction, event: any): void {
+    if (event?.ctrlKey || event?.metaKey) {
+      const idx = this.selectedTransactions.findIndex(t => t.id === transaction.id);
+      idx >= 0 ? this.selectedTransactions.splice(idx, 1) : this.selectedTransactions.push(transaction);
+    } else if (event?.shiftKey && this.selectedTransactions.length > 0) {
+      const last = this.selectedTransactions[this.selectedTransactions.length - 1];
+      const startIdx = this.filteredTransactions.findIndex(t => t.id === last.id);
+      const endIdx = this.filteredTransactions.findIndex(t => t.id === transaction.id);
+      const [from, to] = startIdx < endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
+      this.selectedTransactions = this.filteredTransactions.slice(from, to + 1);
     } else {
+      this.selectedTransactions = [transaction];
+    }
+    this.focusedIndex = this.filteredTransactions.findIndex(t => t.id === transaction.id);
+  }
+
+  onToggleSelect(event: { transaction: Transaction; selected: boolean }): void {
+    if (event.selected && !this.isSelected(event.transaction)) {
+      this.selectedTransactions.push(event.transaction);
+    } else if (!event.selected) {
       this.selectedTransactions = this.selectedTransactions.filter(t => t.id !== event.transaction.id);
     }
   }
 
-  toggleSelectAll(selected: boolean) {
+  toggleSelectAll(selected: boolean): void {
     if (selected) {
-      // Add all visible transactions to selection
-      this.paginatedTransactions.forEach(t => {
-        if (!this.isSelected(t)) {
-          this.selectedTransactions.push(t);
-        }
-      });
+      this.paginatedTransactions.forEach(t => !this.isSelected(t) && this.selectedTransactions.push(t));
     } else {
-      // Remove all visible transactions from selection
       const visibleIds = new Set(this.paginatedTransactions.map(t => t.id));
       this.selectedTransactions = this.selectedTransactions.filter(t => !visibleIds.has(t.id));
     }
   }
 
-  clearSelection() {
-    this.selectedTransactions = [];
+  clearSelection(): void { this.selectedTransactions = []; }
+
+  // Computed values
+  get totalAmount(): number { return this.filteredTransactions.reduce((sum, t) => sum + t.amount, 0); }
+  get incomeTotal(): number { return this.filteredTransactions.filter(t => t.amount > 0).reduce((sum, t) => sum + t.amount, 0); }
+  get expenseTotal(): number { return this.filteredTransactions.filter(t => t.amount < 0).reduce((sum, t) => sum + t.amount, 0); }
+  get selectedTotal(): number { return this.selectedTransactions.reduce((sum, t) => sum + t.amount, 0); }
+  get uncategorizedCount(): number { return this.filteredTransactions.filter(t => !t.category && !t.isContextOnly).length; }
+
+  get categoryStats(): CategoryStat[] {
+    const stats = new Map<string, number>();
+    this.filteredTransactions.forEach(t => {
+      if (t.category && t.amount < 0) stats.set(t.category, (stats.get(t.category) || 0) + Math.abs(t.amount));
+    });
+    return Array.from(stats.entries()).map(([name, total]) => ({ name, total })).sort((a, b) => b.total - a.total);
   }
 
-  // Ask AI
-  onAskAI(transaction: Transaction) {
-    this.aiContextService.askAboutTransaction(transaction);
+  onExpandChange(transaction: Transaction, expanded: boolean): void {
+    expanded ? this.expandedIds.add(transaction.id) : this.expandedIds.delete(transaction.id);
   }
 
-  // Categorization methods
-  async categorizeSelected() {
-    if (this.selectedTransactions.length === 0) return;
-    const uncategorized = this.selectedTransactions.filter(t => !t.category && !t.isContextOnly);
-    if (uncategorized.length === 0) {
-      this.snackBar.open('All selected transactions already have categories', '', { duration: 2000 });
-      return;
-    }
-    await this.categorizeTransactions(uncategorized);
+  // Drag & Drop
+  onDropToCategory(transaction: Transaction, category: Category): void {
+    this.undoService.recordCategoryChange(transaction, transaction.category, category.name);
+    transaction.category = category.name;
+    this.transactionService.updateTransaction(transaction);
+    this.snackBar.open(`Moved to ${category.name}`, 'Undo', { duration: 3000 }).onAction().subscribe(() => this.undo());
   }
 
-  async categorizeUncategorized() {
-    const uncategorized = this.filteredTransactions.filter(t => !t.category && !t.isContextOnly);
-    if (uncategorized.length === 0) {
-      this.snackBar.open('No uncategorized transactions found', '', { duration: 2000 });
-      return;
-    }
-    await this.categorizeTransactions(uncategorized);
+  onDropToUncategorize(transaction: Transaction): void {
+    if (transaction.category) this.undoService.recordCategoryChange(transaction, transaction.category, '');
+    transaction.category = undefined;
+    this.transactionService.updateTransaction(transaction);
+    this.snackBar.open('Category removed', 'Undo', { duration: 3000 }).onAction().subscribe(() => this.undo());
   }
 
-  async categorizeFiltered() {
-    const toCategorize = this.filteredTransactions.filter(t => !t.isContextOnly);
-    if (toCategorize.length === 0) {
-      this.snackBar.open('No transactions to categorize', '', { duration: 2000 });
-      return;
-    }
-    // Filtered includes all transactions (even already categorized ones)
-    await this.categorizeTransactions(toCategorize, true);
+  // Transaction actions
+  onUpdateTransaction(transaction: Transaction): void {
+    this.transactionService.updateTransaction(transaction);
+    this.snackBar.open('Transaction updated', '', { duration: 2000 });
   }
 
-  private async categorizeTransactions(transactions: Transaction[], includeAlreadyCategorized: boolean = false) {
-    // Use the new backend-based categorization system
-    const transactionIds = transactions.map(t => t.id);
+  onEditTransaction(transaction: Transaction): void {
+    const linkedTransactions = transaction.matchInfo?.linkedTransactionIds
+      ? this.transactions.filter(t => transaction.matchInfo!.linkedTransactionIds.includes(t.id)) : [];
+    const linkedOrders = transaction.linkedOrderIds?.length
+      ? this.transactions.filter(t => transaction.linkedOrderIds!.includes(t.id)) : [];
 
-    try {
-      // Start the categorization job on the backend
-      const job = await this.categorizationService.startCategorization({
-        transactionIds,
-        includeAlreadyCategorized
-      });
-
-      this.snackBar.open(
-        `Started categorization of ${transactionIds.length} transactions`,
-        'View Progress',
-        { duration: 5000 }
-      ).onAction().subscribe(() => {
-        this.openCategorizationDialog();
-      });
-
-      // Open the dialog automatically
-      this.openCategorizationDialog();
-
-    } catch (error: any) {
-      console.error('Error starting categorization:', error);
-      this.snackBar.open(
-        error?.error?.error || 'Failed to start categorization',
-        '',
-        { duration: 3000 }
-      );
-    }
-  }
-
-  openCategorizationDialog() {
-    this.dialog.open(CategorizationDialogComponent, {
-      width: '800px',
-      maxHeight: '90vh',
-      disableClose: false
-    }).afterClosed().subscribe(() => {
-      // Reload transactions to reflect any changes
-      this.transactionService.loadTransactions();
+    this.dialog.open(TransactionDetailDialogComponent, {
+      width: '800px', maxWidth: '95vw', maxHeight: '90vh',
+      data: { transaction, categories: this.categories, linkedTransactions, linkedOrders }
+    }).afterClosed().subscribe((result: TransactionDetailDialogResult) => {
+      if (!result) return;
+      if (result.action === 'save' && result.transaction) {
+        this.transactionService.updateTransaction(result.transaction);
+        this.snackBar.open('Transaction updated', '', { duration: 2000 });
+      } else if (result.action === 'delete') this.onDeleteTransaction(transaction);
+      else if (result.action === 'split') this.onSplitTransaction(transaction);
+      else if (result.action === 'merge') this.onMergeTransaction(transaction);
+      else if (result.action === 'askAI') this.aiContextService.askAboutTransaction(transaction);
     });
   }
 
-  // Maintenance methods
-  async cleanupCategories() {
-    try {
-      const response = await fetch('http://localhost:3000/categories/cleanup', {
-        method: 'POST'
-      });
-      const result = await response.json();
+  onDeleteTransaction(transaction: Transaction): void {
+    this.undoService.recordDelete(transaction);
+    this.transactionService.deleteTransaction(transaction.id);
+    this.selectedTransactions = this.selectedTransactions.filter(t => t.id !== transaction.id);
+    this.snackBar.open('Transaction deleted', 'Undo', { duration: 3000 }).onAction().subscribe(() => this.undo());
+  }
 
-      if (result.success) {
-        this.snackBar.open(
-          `Removed ${result.categoriesRemoved.length} categories, reset ${result.transactionsReset} transactions`,
-          '',
-          { duration: 4000 }
-        );
-        // Reload data
-        await this.categoryService.loadCategories();
-        await this.transactionService.loadTransactions();
-      }
-    } catch (error) {
-      this.snackBar.open('Failed to cleanup categories', '', { duration: 3000 });
+  onMergeTransaction(transaction: Transaction): void {
+    this.dialog.open(MergeDialogComponent, {
+      width: '600px',
+      data: { sourceTransaction: transaction, transactions: this.filteredTransactions.filter(t => t.id !== transaction.id) }
+    }).afterClosed().subscribe(r => r && this.snackBar.open('Transactions merged', '', { duration: 2000 }));
+  }
+
+  onSplitTransaction(transaction: Transaction): void {
+    this.dialog.open(SplitDialogComponent, {
+      width: '500px', data: { transaction, categories: this.categories }
+    }).afterClosed().subscribe(r => r && this.snackBar.open('Transaction split', '', { duration: 2000 }));
+  }
+
+  // Undo
+  undo(): void {
+    const action = this.undoService.popUndo();
+    if (!action) return;
+    if (action.type === 'category') {
+      const tx = this.transactions.find(t => t.id === action.data.transactionId);
+      if (tx) { tx.category = action.data.oldCategory; this.transactionService.updateTransaction(tx); }
+    } else if (action.type === 'delete') {
+      this.snackBar.open('Undo delete not fully implemented', '', { duration: 2000 });
     }
   }
 
-  async findDuplicates() {
+  // Matching
+  async runMatching(): Promise<void> {
+    this.isMatching = true;
     try {
-      const response = await fetch('http://localhost:3000/transactions/find-duplicates', {
-        method: 'POST'
-      });
-      const result = await response.json();
+      const result = await this.actionsService.runMatching();
+      this.snackBar.open(`Matching complete: ${result.totalMatches} auto-matches, ${result.totalSuggestions} suggestions`, '', { duration: 4000 });
+      await this.transactionService.loadTransactions();
+    } catch (error) {
+      this.snackBar.open('Matching failed', '', { duration: 3000 });
+    }
+    this.isMatching = false;
+  }
 
-      // Open dialog with results (even if empty - dialog will show "no duplicates" message)
-      const dialogRef = this.dialog.open(DuplicatesDialogComponent, {
-        width: '900px',
-        maxWidth: '95vw',
-        maxHeight: '90vh',
-        data: {
-          groups: result.groups || [],
-          totalDuplicates: result.totalDuplicates || 0
-        }
-      });
+  openMatchingOverview(): void {
+    this.dialog.open(MatchingOverviewDialogComponent, {
+      width: '90vw', maxWidth: '1600px', height: '90vh', maxHeight: '90vh',
+      data: { transactions: this.transactions }
+    }).afterClosed().subscribe(() => this.transactionService.loadTransactions());
+  }
 
-      dialogRef.afterClosed().subscribe((result: DuplicatesDialogResult | undefined) => {
-        if (result?.removedIds?.length) {
-          this.snackBar.open(
-            `Removed ${result.removedIds.length} duplicate transaction(s)`,
-            '',
-            { duration: 4000 }
-          );
-          // Reload transactions
+  openImportDialog(type: 'csv' | 'amazon' | 'paypal'): void {
+    this.dialog.open(ImportDialogComponent, {
+      width: '700px', maxHeight: '90vh', data: { initialTab: type, categories: this.categories }
+    }).afterClosed().subscribe((result: ImportDialogResult) => {
+      if (result?.imported) {
+        this.snackBar.open(`Imported ${result.count} transaction(s)`, '', { duration: 3000 });
+        this.transactionService.loadTransactions();
+      }
+    });
+  }
+
+  // Categorization
+  onCategorize(type: 'selected' | 'uncategorized' | 'filtered'): void {
+    if (type === 'selected') this.categorizeSelected();
+    else if (type === 'uncategorized') this.categorizeUncategorized();
+    else if (type === 'filtered') this.categorizeFiltered();
+  }
+
+  async categorizeSelected(): Promise<void> {
+    if (this.selectedTransactions.length === 0) return;
+    const uncategorized = this.selectedTransactions.filter(t => !t.category && !t.isContextOnly);
+    if (uncategorized.length === 0) { this.snackBar.open('All selected transactions already have categories', '', { duration: 2000 }); return; }
+    await this.startCategorization(uncategorized);
+  }
+
+  async categorizeUncategorized(): Promise<void> {
+    const uncategorized = this.filteredTransactions.filter(t => !t.category && !t.isContextOnly);
+    if (uncategorized.length === 0) { this.snackBar.open('No uncategorized transactions found', '', { duration: 2000 }); return; }
+    await this.startCategorization(uncategorized);
+  }
+
+  async categorizeFiltered(): Promise<void> {
+    const toCategorize = this.filteredTransactions.filter(t => !t.isContextOnly);
+    if (toCategorize.length === 0) { this.snackBar.open('No transactions to categorize', '', { duration: 2000 }); return; }
+    await this.startCategorization(toCategorize, true);
+  }
+
+  private async startCategorization(transactions: Transaction[], includeAlreadyCategorized = false): Promise<void> {
+    try {
+      await this.actionsService.startCategorization(transactions, includeAlreadyCategorized);
+      this.snackBar.open(`Started categorization of ${transactions.length} transactions`, 'View Progress', { duration: 5000 })
+        .onAction().subscribe(() => this.openCategorizationDialog());
+      this.openCategorizationDialog();
+    } catch (error: any) {
+      this.snackBar.open(error?.error?.error || 'Failed to start categorization', '', { duration: 3000 });
+    }
+  }
+
+  openCategorizationDialog(): void {
+    this.dialog.open(CategorizationDialogComponent, { width: '800px', maxHeight: '90vh', disableClose: false })
+      .afterClosed().subscribe(() => this.transactionService.loadTransactions());
+  }
+
+  // Maintenance
+  onMaintenance(action: 'cleanup' | 'find-duplicates' | 'remove-duplicates'): void {
+    if (action === 'cleanup') this.cleanupCategories();
+    else if (action === 'find-duplicates') this.findDuplicates();
+    else if (action === 'remove-duplicates') this.removeDuplicates();
+  }
+
+  async cleanupCategories(): Promise<void> {
+    try {
+      const result = await this.actionsService.cleanupCategories();
+      this.snackBar.open(`Removed ${result.categoriesRemoved.length} categories, reset ${result.transactionsReset} transactions`, '', { duration: 4000 });
+    } catch { this.snackBar.open('Failed to cleanup categories', '', { duration: 3000 }); }
+  }
+
+  async findDuplicates(): Promise<void> {
+    try {
+      const result = await this.actionsService.findDuplicates();
+      this.dialog.open(DuplicatesDialogComponent, {
+        width: '900px', maxWidth: '95vw', maxHeight: '90vh',
+        data: { groups: result.groups, totalDuplicates: result.totalDuplicates }
+      }).afterClosed().subscribe((r: DuplicatesDialogResult | undefined) => {
+        if (r?.removedIds?.length) {
+          this.snackBar.open(`Removed ${r.removedIds.length} duplicate transaction(s)`, '', { duration: 4000 });
           this.transactionService.loadTransactions();
         }
       });
-    } catch (error) {
-      this.snackBar.open('Failed to find duplicates', '', { duration: 3000 });
-    }
+    } catch { this.snackBar.open('Failed to find duplicates', '', { duration: 3000 }); }
   }
 
-  async removeDuplicates() {
+  async removeDuplicates(): Promise<void> {
     try {
-      // First find duplicates
-      const findResponse = await fetch('http://localhost:3000/transactions/find-duplicates', {
-        method: 'POST'
-      });
-      const findResult = await findResponse.json();
+      const findResult = await this.actionsService.findDuplicates();
+      if (findResult.totalDuplicates === 0) { this.snackBar.open('No duplicates found', '', { duration: 3000 }); return; }
+      if (!confirm(`Found ${findResult.totalDuplicates} duplicates in ${findResult.totalGroups} groups.\n\nDo you want to auto-remove the duplicates?`)) return;
+      const result = await this.actionsService.removeDuplicatesAuto();
+      if (result.success) this.snackBar.open(`Removed ${result.removedCount} duplicate transactions`, '', { duration: 4000 });
+    } catch { this.snackBar.open('Failed to remove duplicates', '', { duration: 3000 }); }
+  }
 
-      if (findResult.totalDuplicates === 0) {
-        this.snackBar.open('No duplicates found', '', { duration: 3000 });
-        return;
-      }
+  // Keyboard handling
+  @HostListener('window:keydown', ['$event'])
+  onGlobalKeyDown(event: KeyboardEvent): void {
+    this.keyboardService.processKeyEvent(event);
+  }
 
-      // Confirm removal
-      const confirmed = confirm(
-        `Found ${findResult.totalDuplicates} duplicates in ${findResult.totalGroups} groups.\n\n` +
-        `Do you want to auto-remove the duplicates? (The version with most info will be kept)\n\n` +
-        `For manual control, use "Find Duplicates" instead.`
-      );
-
-      if (!confirmed) return;
-
-      const response = await fetch('http://localhost:3000/transactions/remove-duplicates-auto', {
-        method: 'POST'
-      });
-      const result = await response.json();
-
-      if (result.success) {
-        this.snackBar.open(
-          `Removed ${result.removedCount} duplicate transactions`,
-          '',
-          { duration: 4000 }
-        );
-        // Reload transactions
-        await this.transactionService.loadTransactions();
-      }
-    } catch (error) {
-      this.snackBar.open('Failed to remove duplicates', '', { duration: 3000 });
+  private handleKeyboardAction(event: { action: string; categoryIndex?: number }): void {
+    switch (event.action) {
+      case 'navigateDown':
+        if (this.focusedIndex < this.filteredTransactions.length - 1) {
+          this.focusedIndex++;
+          this.selectedTransactions = [this.filteredTransactions[this.focusedIndex]];
+        }
+        break;
+      case 'navigateUp':
+        if (this.focusedIndex > 0) {
+          this.focusedIndex--;
+          this.selectedTransactions = [this.filteredTransactions[this.focusedIndex]];
+        }
+        break;
+      case 'toggleSelection':
+        if (this.focusedIndex >= 0) {
+          const tx = this.filteredTransactions[this.focusedIndex];
+          const idx = this.selectedTransactions.findIndex(t => t.id === tx.id);
+          idx >= 0 ? this.selectedTransactions.splice(idx, 1) : this.selectedTransactions.push(tx);
+        }
+        break;
+      case 'toggleExpand':
+        if (this.focusedIndex >= 0) {
+          const tx = this.filteredTransactions[this.focusedIndex];
+          this.expandedIds.has(tx.id) ? this.expandedIds.delete(tx.id) : this.expandedIds.add(tx.id);
+        }
+        break;
+      case 'toggleHelp':
+        this.showKeyboardHelp = !this.showKeyboardHelp;
+        break;
+      case 'undo':
+        this.undo();
+        break;
+      case 'assignCategory':
+        if (event.categoryIndex !== undefined && event.categoryIndex < this.categories.length && this.selectedTransactions.length > 0) {
+          const category = this.categories[event.categoryIndex];
+          this.undoService.recordBulkCategoryChange(this.selectedTransactions, category.name);
+          this.selectedTransactions.forEach(t => { t.category = category.name; this.transactionService.updateTransaction(t); });
+          this.snackBar.open(`Assigned "${category.name}" to ${this.selectedTransactions.length} transactions`, '', { duration: 2000 });
+        }
+        break;
     }
   }
+
+  trackByFn(index: number, transaction: Transaction): string { return transaction.id; }
 }

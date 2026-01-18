@@ -4,7 +4,11 @@
  * Re-exports all transaction-related sub-components.
  */
 
-export * from './transaction-filters.component';
-export * from './selection-bar.component';
-export * from './keyboard-shortcuts.component';
-export * from './category-sidebar.component';
+export * from './toolbar';
+export * from './filters';
+export * from './selection';
+export * from './summary';
+export * from './sidebar';
+export * from './keyboard-help';
+export * from './matching';
+export * from './import';
