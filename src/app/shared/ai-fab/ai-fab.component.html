@@ -1,0 +1,138 @@
+<!-- Backdrop -->
+<div class="fab-backdrop"
+     *ngIf="context.isOpen"
+     (click)="closePanel()">
+</div>
+
+<!-- Sliding Panel -->
+<div class="ai-panel" [@panelState]="context.isOpen ? 'open' : 'closed'">
+  <!-- Panel Header -->
+  <div class="panel-header">
+    <div class="header-title">
+      <mat-icon>smart_toy</mat-icon>
+      <span>AI Assistant</span>
+    </div>
+    <div class="header-actions">
+      <button mat-icon-button (click)="clearChat()" matTooltip="Clear conversation">
+        <mat-icon>refresh</mat-icon>
+      </button>
+      <button mat-icon-button (click)="closePanel()" matTooltip="Close">
+        <mat-icon>close</mat-icon>
+      </button>
+    </div>
+  </div>
+
+  <!-- Attached Transactions -->
+  <div class="attached-transactions" *ngIf="context.attachedTransactions.length > 0">
+    <div class="attached-header">
+      <span>Attached Transactions ({{ context.attachedTransactions.length }})</span>
+      <button mat-icon-button (click)="clearTransactions()" matTooltip="Clear all">
+        <mat-icon>clear_all</mat-icon>
+      </button>
+    </div>
+    <div class="attached-list">
+      <div class="attached-item" *ngFor="let tx of context.attachedTransactions">
+        <div class="tx-info">
+          <span class="tx-desc">{{ tx.description | slice:0:30 }}{{ tx.description.length > 30 ? '...' : '' }}</span>
+          <span class="tx-amount" [class.positive]="tx.amount > 0" [class.negative]="tx.amount < 0">
+            {{ tx.amount | currency:'EUR':'symbol':'1.2-2' }}
+          </span>
+        </div>
+        <button mat-icon-button (click)="detachTransaction(tx.id)" class="remove-btn">
+          <mat-icon>close</mat-icon>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <mat-divider *ngIf="context.attachedTransactions.length > 0"></mat-divider>
+
+  <!-- Chat Messages -->
+  <div class="chat-messages" #messagesContainer>
+    <!-- Welcome message -->
+    <div class="message assistant" *ngIf="messages.length === 0">
+      <div class="message-content">
+        <p>How can I help you?</p>
+        <p class="hint" *ngIf="context.attachedTransactions.length > 0">
+          I see you have {{ context.attachedTransactions.length }} transaction(s) attached.
+        </p>
+      </div>
+    </div>
+
+    <!-- Messages -->
+    <div *ngFor="let message of messages"
+         class="message"
+         [class.user]="message.role === 'user'"
+         [class.assistant]="message.role === 'assistant'">
+      <div class="message-content">
+        <div class="message-text" [innerHTML]="formatMessage(message.content)"></div>
+
+        <!-- Transaction data -->
+        <div class="data-table" *ngIf="message.transactions?.length">
+          <div class="tx-row" *ngFor="let tx of message.transactions">
+            <span>{{ tx.date | date:'shortDate' }}</span>
+            <span class="tx-desc">{{ tx.description | slice:0:25 }}</span>
+            <span [class.positive]="tx.amount > 0" [class.negative]="tx.amount < 0">
+              {{ tx.amount | currency:'EUR':'symbol':'1.2-2' }}
+            </span>
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="message-actions" *ngIf="message.actions?.length">
+          <button mat-stroked-button *ngFor="let action of message.actions" (click)="action.action()">
+            <mat-icon>{{ action.icon }}</mat-icon>
+            {{ action.label }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Loading -->
+    <div class="message assistant" *ngIf="isLoading">
+      <div class="message-content loading">
+        <mat-spinner diameter="20"></mat-spinner>
+        <span>Thinking...</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Suggested Prompts -->
+  <div class="suggested-prompts" *ngIf="messages.length === 0 && context.suggestedPrompts.length > 0">
+    <mat-chip-set>
+      <mat-chip *ngFor="let prompt of context.suggestedPrompts" (click)="sendMessage(prompt)">
+        {{ prompt }}
+      </mat-chip>
+    </mat-chip-set>
+  </div>
+
+  <!-- Input Area -->
+  <div class="input-area">
+    <mat-form-field appearance="outline" class="input-field">
+      <input matInput
+             placeholder="Ask anything..."
+             [(ngModel)]="userInput"
+             (keyup.enter)="sendMessage()"
+             [disabled]="isLoading">
+    </mat-form-field>
+    <button mat-mini-fab color="primary"
+            (click)="sendMessage()"
+            [disabled]="!userInput.trim() || isLoading">
+      <mat-icon>send</mat-icon>
+    </button>
+  </div>
+</div>
+
+<!-- FAB Button -->
+<button mat-fab
+        color="primary"
+        class="ai-fab"
+        [class.has-transactions]="context.attachedTransactions.length > 0"
+        [@fabState]="context.attachedTransactions.length > 0 ? 'active' : 'normal'"
+        (click)="togglePanel()"
+        [matBadge]="context.attachedTransactions.length || null"
+        [matBadgeHidden]="context.attachedTransactions.length === 0"
+        matBadgeColor="accent"
+        matTooltip="AI Assistant">
+  <mat-icon>{{ context.isOpen ? 'close' : 'smart_toy' }}</mat-icon>
+</button>

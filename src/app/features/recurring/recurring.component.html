@@ -1,0 +1,230 @@
+<div class="recurring-container">
+  <!-- Header -->
+  <div class="page-header">
+    <div class="header-left">
+      <h1>
+        <mat-icon>repeat</mat-icon>
+        Recurring Transactions
+      </h1>
+      <p class="subtitle">Track subscriptions, bills, and regular payments</p>
+    </div>
+    <div class="header-actions">
+      <button mat-stroked-button (click)="runDetection()" [disabled]="isDetecting">
+        <mat-icon>search</mat-icon>
+        {{ isDetecting ? 'Detecting...' : 'Run Detection' }}
+      </button>
+    </div>
+  </div>
+
+  <!-- Loading State -->
+  <div class="loading-state" *ngIf="isLoading">
+    <mat-spinner diameter="48"></mat-spinner>
+    <p>Loading recurring patterns...</p>
+  </div>
+
+  <!-- Stats Cards -->
+  <div class="stats-row" *ngIf="!isLoading">
+    <mat-card class="stat-card">
+      <div class="stat-icon total">
+        <mat-icon>repeat</mat-icon>
+      </div>
+      <div class="stat-content">
+        <span class="stat-value">{{ patterns.length }}</span>
+        <span class="stat-label">Patterns Detected</span>
+      </div>
+    </mat-card>
+
+    <mat-card class="stat-card">
+      <div class="stat-icon active">
+        <mat-icon>check_circle</mat-icon>
+      </div>
+      <div class="stat-content">
+        <span class="stat-value">{{ activePatterns.length }}</span>
+        <span class="stat-label">Active</span>
+      </div>
+    </mat-card>
+
+    <mat-card class="stat-card">
+      <div class="stat-icon monthly">
+        <mat-icon>calendar_month</mat-icon>
+      </div>
+      <div class="stat-content">
+        <span class="stat-value">{{ getMonthlyTotal() | currency:'EUR':'symbol':'1.2-2' }}</span>
+        <span class="stat-label">Monthly Total</span>
+      </div>
+    </mat-card>
+
+    <mat-card class="stat-card">
+      <div class="stat-icon upcoming">
+        <mat-icon>schedule</mat-icon>
+      </div>
+      <div class="stat-content">
+        <span class="stat-value">{{ getUpcomingCount() }}</span>
+        <span class="stat-label">Due This Week</span>
+      </div>
+    </mat-card>
+  </div>
+
+  <!-- Filter Bar -->
+  <div class="filter-bar" *ngIf="!isLoading && patterns.length > 0">
+    <mat-form-field appearance="outline">
+      <mat-label>Status</mat-label>
+      <mat-select [(ngModel)]="filterStatus" (selectionChange)="applyFilters()">
+        <mat-option value="all">All</mat-option>
+        <mat-option value="active">Active Only</mat-option>
+        <mat-option value="inactive">Inactive Only</mat-option>
+      </mat-select>
+    </mat-form-field>
+
+    <mat-form-field appearance="outline">
+      <mat-label>Frequency</mat-label>
+      <mat-select [(ngModel)]="filterFrequency" (selectionChange)="applyFilters()">
+        <mat-option value="all">All Frequencies</mat-option>
+        <mat-option value="weekly">Weekly</mat-option>
+        <mat-option value="biweekly">Bi-weekly</mat-option>
+        <mat-option value="monthly">Monthly</mat-option>
+        <mat-option value="quarterly">Quarterly</mat-option>
+        <mat-option value="yearly">Yearly</mat-option>
+        <mat-option value="irregular">Irregular</mat-option>
+      </mat-select>
+    </mat-form-field>
+
+    <mat-form-field appearance="outline">
+      <mat-label>Confidence</mat-label>
+      <mat-select [(ngModel)]="filterConfidence" (selectionChange)="applyFilters()">
+        <mat-option value="all">All</mat-option>
+        <mat-option value="high">High</mat-option>
+        <mat-option value="medium">Medium</mat-option>
+        <mat-option value="low">Low</mat-option>
+      </mat-select>
+    </mat-form-field>
+  </div>
+
+  <!-- Empty State -->
+  <div class="empty-state" *ngIf="!isLoading && patterns.length === 0">
+    <mat-icon>repeat</mat-icon>
+    <h2>No Recurring Patterns Found</h2>
+    <p>Click "Run Detection" to analyze your transactions for recurring patterns like subscriptions and bills.</p>
+    <button mat-raised-button color="primary" (click)="runDetection()" [disabled]="isDetecting">
+      <mat-icon>search</mat-icon>
+      Run Detection
+    </button>
+  </div>
+
+  <!-- Patterns List -->
+  <div class="patterns-list" *ngIf="!isLoading && filteredPatterns.length > 0">
+    <mat-accordion multi>
+      <mat-expansion-panel *ngFor="let pattern of filteredPatterns" [class.inactive]="!pattern.isActive">
+        <mat-expansion-panel-header collapsedHeight="auto" expandedHeight="auto">
+          <mat-panel-title>
+            <div class="pattern-header">
+              <div class="status-indicator" [class.active]="pattern.isActive" [class.inactive]="!pattern.isActive">
+                <mat-icon>{{ pattern.isActive ? 'check_circle' : 'pause_circle' }}</mat-icon>
+              </div>
+              <div class="pattern-main">
+                <span class="beneficiary" [matTooltip]="pattern.beneficiary">{{ pattern.beneficiary }}</span>
+                <span class="description" *ngIf="pattern.description" [matTooltip]="pattern.description">{{ pattern.description }}</span>
+              </div>
+            </div>
+          </mat-panel-title>
+          <mat-panel-description>
+            <div class="pattern-summary">
+              <mat-chip class="frequency-chip" [class]="pattern.frequency">
+                {{ getFrequencyLabel(pattern.frequency) }}
+              </mat-chip>
+              <span class="amount">{{ -pattern.averageAmount | currency:'EUR':'symbol':'1.2-2' }}</span>
+              <mat-chip class="confidence-chip" [class]="pattern.confidence">
+                {{ pattern.confidence }}
+              </mat-chip>
+            </div>
+          </mat-panel-description>
+        </mat-expansion-panel-header>
+
+        <!-- Expanded Content -->
+        <div class="pattern-details">
+          <!-- Total Value Highlight -->
+          <div class="total-value-card">
+            <div class="total-label">Total Spent</div>
+            <div class="total-amount">{{ getTotalValue(pattern) | currency:'EUR':'symbol':'1.2-2' }}</div>
+            <div class="total-note">Across {{ pattern.occurrenceCount }} transactions</div>
+          </div>
+
+          <div class="details-grid">
+            <div class="detail-item">
+              <span class="label">Occurrences</span>
+              <span class="value">{{ pattern.occurrenceCount }} times</span>
+            </div>
+            <div class="detail-item">
+              <span class="label">First Payment</span>
+              <span class="value">{{ pattern.firstOccurrence | date:'dd.MM.yyyy' }}</span>
+            </div>
+            <div class="detail-item">
+              <span class="label">Last Payment</span>
+              <span class="value">{{ pattern.lastOccurrence | date:'dd.MM.yyyy' }}</span>
+            </div>
+            <div class="detail-item" *ngIf="pattern.nextExpectedDate">
+              <span class="label">Next Expected</span>
+              <span class="value" [class.soon]="isDueSoon(pattern)">
+                {{ pattern.nextExpectedDate | date:'dd.MM.yyyy' }}
+                <span class="days-away">({{ getDaysUntil(pattern.nextExpectedDate) }})</span>
+              </span>
+            </div>
+            <div class="detail-item">
+              <span class="label">Avg. Interval</span>
+              <span class="value">{{ pattern.averageIntervalDays }} days</span>
+            </div>
+            <div class="detail-item">
+              <span class="label">Amount Variance</span>
+              <span class="value">{{ pattern.amountVariance | currency:'EUR':'symbol':'1.2-2' }}</span>
+            </div>
+          </div>
+
+          <mat-divider></mat-divider>
+
+          <div class="pattern-actions">
+            <mat-form-field appearance="outline" class="category-select">
+              <mat-label>Category</mat-label>
+              <mat-select [value]="pattern.category" (selectionChange)="updateCategory(pattern, $event.value)">
+                <mat-option [value]="null">Uncategorized</mat-option>
+                <mat-option *ngFor="let cat of categories" [value]="cat.name">
+                  {{ cat.name }}
+                </mat-option>
+              </mat-select>
+            </mat-form-field>
+
+            <button mat-stroked-button (click)="viewTransactions(pattern)">
+              <mat-icon>visibility</mat-icon>
+              View Transactions ({{ pattern.occurrenceCount }})
+            </button>
+
+            <button mat-stroked-button color="warn" (click)="deletePattern(pattern)">
+              <mat-icon>delete</mat-icon>
+              Remove Pattern
+            </button>
+          </div>
+        </div>
+      </mat-expansion-panel>
+    </mat-accordion>
+  </div>
+
+  <!-- Upcoming Payments Section -->
+  <div class="upcoming-section" *ngIf="!isLoading && getUpcomingPatterns().length > 0">
+    <h2>
+      <mat-icon>event</mat-icon>
+      Upcoming Payments
+    </h2>
+    <div class="upcoming-list">
+      <div class="upcoming-item" *ngFor="let pattern of getUpcomingPatterns()">
+        <div class="upcoming-date">
+          <span class="day">{{ pattern.nextExpectedDate | date:'dd' }}</span>
+          <span class="month">{{ pattern.nextExpectedDate | date:'MMM' }}</span>
+        </div>
+        <div class="upcoming-info">
+          <span class="name">{{ pattern.beneficiary }}</span>
+          <span class="frequency">{{ getFrequencyLabel(pattern.frequency) }}</span>
+        </div>
+        <span class="upcoming-amount">{{ -pattern.averageAmount | currency:'EUR':'symbol':'1.2-2' }}</span>
+      </div>
+    </div>
+  </div>
+</div>

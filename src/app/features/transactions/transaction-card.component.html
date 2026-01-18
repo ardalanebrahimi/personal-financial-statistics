@@ -1,0 +1,205 @@
+<div class="transaction-card"
+     [class.selected]="selected"
+     [class.expanded]="expanded"
+     [class.expense]="transaction.amount < 0"
+     [class.income]="transaction.amount > 0"
+     [class.matched]="transaction.matchInfo"
+     [class.editing]="isEditing"
+     [class.compact]="compact"
+     [class.context-only]="transaction.isContextOnly"
+     [class.has-linked-orders]="transaction.linkedOrderIds?.length"
+     (click)="onCardClick($event)"
+     (dblclick)="onDoubleClick($event)"
+     [attr.tabindex]="0"
+     (keydown)="onKeyDown($event)">
+
+  <!-- Compact View -->
+  <div class="card-main">
+    <!-- Checkbox for selection -->
+    <mat-checkbox
+      class="selection-checkbox"
+      [checked]="selected"
+      (change)="onCheckboxChange($event)"
+      (click)="$event.stopPropagation()">
+    </mat-checkbox>
+
+    <div class="card-left">
+      <!-- Platform indicator (Amazon/PayPal) -->
+      <div class="platform-indicator" *ngIf="getPlatform() as platform">
+        <mat-icon *ngIf="platform === 'amazon'" class="amazon-icon" matTooltip="Amazon transaction">shopping_cart</mat-icon>
+        <mat-icon *ngIf="platform === 'paypal'" class="paypal-icon" matTooltip="PayPal transaction">account_balance_wallet</mat-icon>
+      </div>
+      <!-- Link status for platform transactions -->
+      <div class="link-status" *ngIf="getPlatform() && !transaction.isContextOnly">
+        <mat-icon *ngIf="hasLinks()" class="linked-icon" [matTooltip]="'Linked to ' + (transaction.linkedOrderIds?.length || 0) + ' orders'">link</mat-icon>
+        <mat-icon *ngIf="!hasLinks()" class="unlinked-icon" matTooltip="No linked orders">link_off</mat-icon>
+      </div>
+      <div class="source-indicator" *ngIf="transaction.source && !getPlatform()">
+        <mat-icon [matTooltip]="transaction.source.connectorType">account_balance</mat-icon>
+      </div>
+      <div class="date-column">
+        <span class="date">{{ transaction.date | date:'dd.MM.yy' }}</span>
+        <span class="weekday">{{ transaction.date | date:'EEE' }}</span>
+      </div>
+    </div>
+
+    <div class="card-center">
+      <div class="description-row">
+        <span class="description"
+              *ngIf="!isEditingDescription"
+              (dblclick)="startEditDescription($event)">
+          {{ transaction.description }}
+        </span>
+        <input #descriptionInput
+               *ngIf="isEditingDescription"
+               class="edit-input"
+               [(ngModel)]="editDescription"
+               (blur)="saveDescription()"
+               (keydown.enter)="saveDescription()"
+               (keydown.escape)="cancelEditDescription()">
+      </div>
+      <div class="beneficiary-row" *ngIf="transaction.beneficiary">
+        <mat-icon class="small-icon">person</mat-icon>
+        <span class="beneficiary">{{ transaction.beneficiary }}</span>
+      </div>
+    </div>
+
+    <div class="card-right">
+      <div class="amount"
+           [class.negative]="transaction.amount < 0"
+           [class.positive]="transaction.amount > 0"
+           *ngIf="!isEditingAmount"
+           (dblclick)="startEditAmount($event)">
+        {{ transaction.amount | currency:'EUR':'symbol':'1.2-2' }}
+      </div>
+      <input #amountInput
+             *ngIf="isEditingAmount"
+             type="number"
+             step="0.01"
+             class="edit-input amount-input"
+             [(ngModel)]="editAmount"
+             (blur)="saveAmount()"
+             (keydown.enter)="saveAmount()"
+             (keydown.escape)="cancelEditAmount()">
+
+      <mat-chip *ngIf="transaction.category"
+                class="category-chip"
+                [style.background-color]="getCategoryColor()"
+                [style.color]="getContrastColor()">
+        {{ transaction.category }}
+      </mat-chip>
+      <mat-chip *ngIf="!transaction.category" class="category-chip uncategorized">
+        Uncategorized
+      </mat-chip>
+    </div>
+
+    <div class="card-actions">
+      <button mat-icon-button
+              matTooltip="Ask AI"
+              (click)="onAskAI($event)"
+              class="ask-ai-button">
+        <mat-icon>smart_toy</mat-icon>
+      </button>
+      <button mat-icon-button
+              [matMenuTriggerFor]="actionMenu"
+              (click)="$event.stopPropagation()">
+        <mat-icon>more_vert</mat-icon>
+      </button>
+      <mat-menu #actionMenu="matMenu">
+        <button mat-menu-item (click)="toggleExpand()">
+          <mat-icon>{{ expanded ? 'expand_less' : 'expand_more' }}</mat-icon>
+          <span>{{ expanded ? 'Collapse' : 'Expand' }}</span>
+        </button>
+        <button mat-menu-item (click)="onEdit()">
+          <mat-icon>edit</mat-icon>
+          <span>Edit</span>
+        </button>
+        <button mat-menu-item (click)="onAskAI($event)">
+          <mat-icon>smart_toy</mat-icon>
+          <span>Ask AI</span>
+        </button>
+        <button mat-menu-item (click)="onMerge()">
+          <mat-icon>merge</mat-icon>
+          <span>Merge with...</span>
+        </button>
+        <button mat-menu-item (click)="onSplit()">
+          <mat-icon>call_split</mat-icon>
+          <span>Split</span>
+        </button>
+        <button mat-menu-item (click)="onDelete()" class="delete-action">
+          <mat-icon>delete</mat-icon>
+          <span>Delete</span>
+        </button>
+      </mat-menu>
+    </div>
+  </div>
+
+  <!-- Context-Only Indicator (Amazon Orders) -->
+  <div class="context-indicator" *ngIf="transaction.isContextOnly">
+    <mat-icon class="small-icon">shopping_cart</mat-icon>
+    <span>Order context (not a bank transaction)</span>
+  </div>
+
+  <!-- Match Indicator -->
+  <div class="match-indicator" *ngIf="transaction.matchInfo">
+    <mat-icon class="small-icon">link</mat-icon>
+    <span>{{ transaction.matchInfo.linkedTransactionIds.length }} linked</span>
+    <mat-chip class="confidence-chip" [class]="transaction.matchInfo.confidence">
+      {{ transaction.matchInfo.confidence }}
+    </mat-chip>
+  </div>
+
+  <!-- Linked Orders Indicator -->
+  <div class="linked-orders-indicator" *ngIf="transaction.linkedOrderIds?.length">
+    <mat-icon class="small-icon">shopping_cart</mat-icon>
+    <span>{{ transaction.linkedOrderIds?.length }} order(s) linked</span>
+    <mat-chip class="orders-chip">
+      details available
+    </mat-chip>
+  </div>
+
+  <!-- Expanded View -->
+  <div class="expanded-content" *ngIf="expanded">
+    <div class="detail-section">
+      <h4>Details</h4>
+      <div class="detail-row">
+        <span class="label">ID:</span>
+        <span class="value">{{ transaction.id }}</span>
+      </div>
+      <div class="detail-row" *ngIf="transaction.source">
+        <span class="label">Source:</span>
+        <span class="value">{{ transaction.source.connectorType }}</span>
+      </div>
+      <div class="detail-row" *ngIf="transaction.source && transaction.source.externalId">
+        <span class="label">External ID:</span>
+        <span class="value">{{ transaction.source.externalId }}</span>
+      </div>
+      <div class="detail-row" *ngIf="transaction.transactionType">
+        <span class="label">Type:</span>
+        <span class="value">{{ transaction.transactionType }}</span>
+      </div>
+    </div>
+
+    <div class="detail-section" *ngIf="transaction.matchInfo">
+      <h4>Match Information</h4>
+      <div class="detail-row">
+        <span class="label">Pattern:</span>
+        <span class="value">{{ transaction.matchInfo.patternType }}</span>
+      </div>
+      <div class="detail-row">
+        <span class="label">Source:</span>
+        <span class="value">{{ transaction.matchInfo.source }}</span>
+      </div>
+      <div class="detail-row">
+        <span class="label">Primary:</span>
+        <span class="value">{{ transaction.matchInfo.isPrimary ? 'Yes' : 'No' }}</span>
+      </div>
+    </div>
+
+    <div class="detail-section flags" *ngIf="transaction.excludeFromStats || transaction.isReconciled">
+      <h4>Flags</h4>
+      <mat-chip *ngIf="transaction.excludeFromStats">Excluded from stats</mat-chip>
+      <mat-chip *ngIf="transaction.isReconciled">Reconciled</mat-chip>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,425 @@
+.transaction-card {
+  background: white;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 8px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-left: 4px solid transparent;
+  outline: none;
+
+  &:hover {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  }
+
+  &:focus {
+    box-shadow: 0 0 0 2px #1976d2;
+  }
+
+  &.selected {
+    background: #e3f2fd;
+    border-left-color: #1976d2;
+  }
+
+  &.expense {
+    border-left-color: #f44336;
+  }
+
+  &.income {
+    border-left-color: #4caf50;
+  }
+
+  &.matched {
+    background: linear-gradient(to right, #fff9c4 0%, white 20%);
+  }
+
+  &.context-only {
+    background: linear-gradient(to right, #fff3e0 0%, white 30%);
+    border-left-color: #ff9800;
+    opacity: 0.9;
+  }
+
+  &.has-linked-orders {
+    background: linear-gradient(to right, #e8f5e9 0%, white 20%);
+  }
+
+  &.editing {
+    box-shadow: 0 0 0 2px #ff9800;
+  }
+}
+
+.card-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.selection-checkbox {
+  flex-shrink: 0;
+}
+
+.card-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 100px;
+}
+
+.source-indicator {
+  color: #666;
+
+  mat-icon {
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+  }
+}
+
+.platform-indicator {
+  display: flex;
+  align-items: center;
+
+  .amazon-icon {
+    color: #ff9800;
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+  }
+
+  .paypal-icon {
+    color: #0070ba;
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+  }
+}
+
+.link-status {
+  display: flex;
+  align-items: center;
+
+  .linked-icon {
+    color: #4caf50;
+    font-size: 16px;
+    width: 16px;
+    height: 16px;
+  }
+
+  .unlinked-icon {
+    color: #ff9800;
+    font-size: 16px;
+    width: 16px;
+    height: 16px;
+  }
+}
+
+.date-column {
+  display: flex;
+  flex-direction: column;
+}
+
+.date {
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.weekday {
+  font-size: 11px;
+  color: #666;
+  text-transform: uppercase;
+}
+
+.card-center {
+  flex: 1;
+  min-width: 0;
+}
+
+.description-row {
+  display: flex;
+  align-items: center;
+}
+
+.description {
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.beneficiary-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.beneficiary {
+  font-size: 12px;
+  color: #666;
+}
+
+.small-icon {
+  font-size: 14px;
+  width: 14px;
+  height: 14px;
+  color: #999;
+}
+
+.card-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 200px;
+  justify-content: flex-end;
+}
+
+.amount {
+  font-size: 16px;
+  font-weight: 600;
+  font-family: 'Roboto Mono', monospace;
+
+  &.negative {
+    color: #d32f2f;
+  }
+
+  &.positive {
+    color: #388e3c;
+  }
+}
+
+.category-chip {
+  font-size: 12px;
+  min-height: 24px;
+  padding: 0 8px;
+
+  &.uncategorized {
+    background: #e0e0e0;
+    color: #666;
+  }
+}
+
+.card-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.2s;
+
+  .transaction-card:hover &,
+  .transaction-card:focus & {
+    opacity: 1;
+  }
+}
+
+.ask-ai-button {
+  color: #1976d2;
+
+  &:hover {
+    background-color: rgba(25, 118, 210, 0.1);
+  }
+}
+
+.context-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed #ff9800;
+  font-size: 12px;
+  color: #e65100;
+  font-style: italic;
+}
+
+.match-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed #e0e0e0;
+  font-size: 12px;
+  color: #666;
+}
+
+.linked-orders-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed #4caf50;
+  font-size: 12px;
+  color: #2e7d32;
+}
+
+.orders-chip {
+  font-size: 10px;
+  min-height: 20px;
+  padding: 0 6px;
+  background: #c8e6c9 !important;
+  color: #2e7d32 !important;
+}
+
+.confidence-chip {
+  font-size: 10px;
+  min-height: 20px;
+  padding: 0 6px;
+
+  &.high {
+    background: #c8e6c9;
+    color: #2e7d32;
+  }
+
+  &.medium {
+    background: #fff9c4;
+    color: #f9a825;
+  }
+
+  &.low {
+    background: #ffcdd2;
+    color: #c62828;
+  }
+}
+
+.expanded-content {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e0e0e0;
+}
+
+.detail-section {
+  margin-bottom: 16px;
+
+  h4 {
+    margin: 0 0 8px 0;
+    font-size: 12px;
+    text-transform: uppercase;
+    color: #666;
+    letter-spacing: 0.5px;
+  }
+}
+
+.detail-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 13px;
+
+  .label {
+    color: #666;
+    min-width: 100px;
+  }
+
+  .value {
+    color: #333;
+    word-break: break-all;
+  }
+}
+
+.flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+
+  mat-chip {
+    font-size: 11px;
+  }
+}
+
+.edit-input {
+  border: 1px solid #1976d2;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: inherit;
+  font-family: inherit;
+  outline: none;
+
+  &:focus {
+    box-shadow: 0 0 0 2px rgba(25, 118, 210, 0.2);
+  }
+}
+
+.amount-input {
+  width: 100px;
+  text-align: right;
+}
+
+.delete-action {
+  color: #d32f2f;
+}
+
+/* Compact mode styles */
+.transaction-card.compact {
+  padding: 6px 12px;
+  margin-bottom: 2px;
+  border-radius: 4px;
+
+  .card-main {
+    gap: 12px;
+  }
+
+  .card-left {
+    min-width: 80px;
+  }
+
+  .date-column {
+    flex-direction: row;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .date {
+    font-size: 12px;
+  }
+
+  .weekday {
+    display: none;
+  }
+
+  .description {
+    font-size: 13px;
+  }
+
+  .beneficiary-row {
+    display: none;
+  }
+
+  .amount {
+    font-size: 13px;
+  }
+
+  .category-chip {
+    font-size: 10px;
+    min-height: 20px;
+    padding: 0 6px;
+  }
+
+  .card-right {
+    min-width: 160px;
+    gap: 8px;
+  }
+
+  .card-actions {
+    opacity: 1;
+
+    button {
+      width: 28px;
+      height: 28px;
+      line-height: 28px;
+    }
+
+    mat-icon {
+      font-size: 18px;
+      width: 18px;
+      height: 18px;
+    }
+  }
+
+  .source-indicator mat-icon {
+    font-size: 16px;
+    width: 16px;
+    height: 16px;
+  }
+}
