@@ -1630,6 +1630,141 @@ app.post('/import/amazon', async (req: Request, res: Response) => {
   }
 });
 
+// DELETE /import/amazon - Delete all Amazon orders and unlink transactions
+app.delete('/import/amazon', async (req: Request, res: Response) => {
+  try {
+    const transactions = await getStoredTransactions();
+
+    let deletedOrders = 0;
+    let unlinkedTransactions = 0;
+
+    // Find and delete all Amazon context-only transactions
+    const amazonOrderIds: string[] = [];
+    for (const tx of transactions) {
+      if (tx.isContextOnly && tx.source?.connectorType === 'amazon') {
+        amazonOrderIds.push(tx.id);
+        db.deleteTransaction(tx.id);
+        deletedOrders++;
+      }
+    }
+
+    // Unlink any bank transactions that were linked to Amazon orders
+    const remainingTransactions = await getStoredTransactions();
+    for (const tx of remainingTransactions) {
+      if (tx.linkedOrderIds && tx.linkedOrderIds.length > 0) {
+        // Remove any Amazon order links
+        const originalLength = tx.linkedOrderIds.length;
+        tx.linkedOrderIds = tx.linkedOrderIds.filter(id => !amazonOrderIds.includes(id));
+
+        if (tx.linkedOrderIds.length !== originalLength) {
+          await saveTransaction(tx);
+          unlinkedTransactions++;
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Amazon data cleanup completed',
+      stats: {
+        deletedOrders,
+        unlinkedTransactions
+      }
+    });
+
+  } catch (error) {
+    console.error('Error cleaning up Amazon data:', error);
+    res.status(500).json({
+      error: 'Failed to cleanup Amazon data',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// POST /import/amazon/refunds - Import Amazon refunds CSV
+app.post('/import/amazon/refunds', async (req: Request, res: Response) => {
+  try {
+    const { csvData, startDate, endDate } = req.body;
+
+    if (!csvData) {
+      return res.status(400).json({ error: 'CSV data is required' });
+    }
+
+    // Create Amazon connector and import refunds
+    const connector = new AmazonConnector('amazon-refunds-import');
+
+    const dateRange = (startDate && endDate) ? {
+      startDate: new Date(startDate),
+      endDate: new Date(endDate)
+    } : undefined;
+
+    const result = connector.importRefundsFromCsv(csvData, dateRange);
+
+    if (!result.success && result.transactions.length === 0) {
+      return res.status(400).json({
+        error: 'Failed to import Amazon refunds data',
+        details: result.errors
+      });
+    }
+
+    // Save transactions to storage
+    let newCount = 0;
+    let duplicateCount = 0;
+
+    for (const tx of result.transactions) {
+      // Check for duplicates
+      const existingTx = await getStoredTransactions();
+      const isDuplicate = existingTx.some(
+        existing =>
+          existing.source?.externalId === tx.externalId ||
+          (
+            Math.abs(new Date(existing.date).getTime() - tx.date.getTime()) < 86400000 &&
+            Math.abs(existing.amount - tx.amount) < 0.01 &&
+            existing.description.includes(tx.description.substring(0, 20))
+          )
+      );
+
+      if (!isDuplicate) {
+        await saveTransaction({
+          id: crypto.randomUUID(),
+          date: tx.date.toISOString(),
+          description: tx.description,
+          amount: tx.amount, // Refunds are POSITIVE (money coming back)
+          category: 'Amazon Refund',
+          beneficiary: tx.beneficiary || 'Amazon',
+          source: {
+            connectorType: 'amazon',
+            externalId: tx.externalId,
+            importedAt: new Date().toISOString()
+          },
+          isContextOnly: true // Amazon refunds are context data
+        });
+        newCount++;
+      } else {
+        duplicateCount++;
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: 'Amazon refunds import completed',
+      stats: {
+        ...result.stats,
+        newTransactions: newCount,
+        duplicatesSkipped: duplicateCount
+      },
+      errors: result.errors.length > 0 ? result.errors : undefined
+    });
+
+  } catch (error) {
+    console.error('Error importing Amazon refunds:', error);
+    return res.status(500).json({
+      error: 'Failed to import Amazon refunds',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
 // ==================== PAYPAL TEXT IMPORT ENDPOINT ====================
 
 // POST /import/paypal - Import PayPal transaction history from text export

@@ -156,10 +156,17 @@ export class OrderMatcher {
 
       const bankDate = new Date(bankTx.date);
       const bankAmount = Math.abs(bankTx.amount);
+      const bankIsNegative = bankTx.amount < 0; // Purchase = negative, Refund = positive
 
-      // Find orders within date range
+      // Find orders within date range with matching sign
+      // (negative bank tx matches negative orders, positive matches positive returns)
       const candidateOrders = sortedOrders.filter(order => {
         if (matchedOrderIds.has(order.id)) return false;
+
+        // Sign must match: purchases (negative) with orders (negative),
+        // refunds (positive) with returns (positive)
+        const orderIsNegative = order.amount < 0;
+        if (bankIsNegative !== orderIsNegative) return false;
 
         const orderDate = new Date(order.date);
         const daysDiff = Math.abs(
@@ -205,10 +212,15 @@ export class OrderMatcher {
 
       const bankDate = new Date(bankTx.date);
       const bankAmount = Math.abs(bankTx.amount);
+      const bankIsNegative = bankTx.amount < 0;
 
-      // Find unmatched orders within date range
+      // Find unmatched orders within date range with matching sign
       const candidateOrders = sortedOrders.filter(order => {
         if (matchedOrderIds.has(order.id)) return false;
+
+        // Sign must match
+        const orderIsNegative = order.amount < 0;
+        if (bankIsNegative !== orderIsNegative) return false;
 
         const orderDate = new Date(order.date);
         const daysDiff = Math.abs(
@@ -277,10 +289,15 @@ export class OrderMatcher {
 
       const bankDate = new Date(bankTx.date);
       const bankAmount = Math.abs(bankTx.amount);
+      const bankIsNegative = bankTx.amount < 0;
 
-      // Find any orders within extended date range for suggestions
+      // Find any orders within extended date range for suggestions (with matching sign)
       const candidateOrders = sortedOrders.filter(order => {
         if (matchedOrderIds.has(order.id)) return false;
+
+        // Sign must match
+        const orderIsNegative = order.amount < 0;
+        if (bankIsNegative !== orderIsNegative) return false;
 
         const orderDate = new Date(order.date);
         const daysDiff = Math.abs(

@@ -150,16 +150,16 @@ interface PayPalImportResult {
           <mat-tab>
             <ng-template mat-tab-label>
               <mat-icon>shopping_cart</mat-icon>
-              <span>Amazon Orders</span>
+              <span>Amazon</span>
             </ng-template>
 
-            <div class="tab-content">
+            <div class="tab-content amazon-content">
               <!-- Instructions -->
               <mat-expansion-panel class="instructions-panel">
                 <mat-expansion-panel-header>
                   <mat-panel-title>
                     <mat-icon>help_outline</mat-icon>
-                    How to get your Amazon order history
+                    How to get your Amazon data
                   </mat-panel-title>
                 </mat-expansion-panel-header>
 
@@ -171,92 +171,129 @@ interface PayPalImportResult {
                     <li>Select "Your Orders" or all data</li>
                     <li>Wait for the email (can take 24-48 hours)</li>
                     <li>Download and extract the ZIP file</li>
-                    <li>Find: <code>Retail.OrderHistory.1/Retail.OrderHistory.csv</code></li>
+                    <li>Orders: <code>Retail.OrderHistory.1/Retail.OrderHistory.csv</code></li>
+                    <li>Returns: <code>Retail.CustomerReturns.X/Retail.CustomerReturns.csv</code></li>
                   </ol>
                 </div>
               </mat-expansion-panel>
 
-              <!-- File Upload -->
-              <div class="upload-section">
-                <input type="file" #amazonInput hidden accept=".csv" (change)="onAmazonFileSelected($event)">
+              <div class="amazon-sections">
+                <!-- Orders Section -->
+                <div class="amazon-section">
+                  <h3><mat-icon>shopping_cart</mat-icon> Orders</h3>
 
-                <div class="drop-zone"
-                     [class.drag-over]="amazonDragOver"
-                     [class.has-file]="amazonFile"
-                     (click)="amazonInput.click()"
-                     (dragover)="onDragOver($event, 'amazon')"
-                     (dragleave)="onDragLeave($event, 'amazon')"
-                     (drop)="onDrop($event, 'amazon')">
+                  <div class="upload-section">
+                    <input type="file" #amazonInput hidden accept=".csv" (change)="onAmazonFileSelected($event)">
 
-                  <mat-icon *ngIf="!amazonFile">cloud_upload</mat-icon>
-                  <mat-icon *ngIf="amazonFile" class="success">check_circle</mat-icon>
+                    <div class="drop-zone small"
+                         [class.drag-over]="amazonDragOver"
+                         [class.has-file]="amazonFile"
+                         (click)="amazonInput.click()"
+                         (dragover)="onDragOver($event, 'amazon')"
+                         (dragleave)="onDragLeave($event, 'amazon')"
+                         (drop)="onDrop($event, 'amazon')">
 
-                  <p *ngIf="!amazonFile">
-                    Drop your Amazon CSV file here or click to browse
-                  </p>
-                  <p *ngIf="amazonFile">
-                    <strong>{{ amazonFile.name }}</strong>
-                    <br>
-                    <span class="file-size">{{ formatFileSize(amazonFile.size) }}</span>
-                  </p>
-                </div>
+                      <mat-icon *ngIf="!amazonFile">cloud_upload</mat-icon>
+                      <mat-icon *ngIf="amazonFile" class="success">check_circle</mat-icon>
 
-                <!-- Optional Date Filter -->
-                <div class="date-filter" *ngIf="amazonFile">
-                  <mat-form-field appearance="outline">
-                    <mat-label>Start Date (optional)</mat-label>
-                    <input matInput [matDatepicker]="startPicker" [(ngModel)]="amazonStartDate">
-                    <mat-datepicker-toggle matSuffix [for]="startPicker"></mat-datepicker-toggle>
-                    <mat-datepicker #startPicker></mat-datepicker>
-                  </mat-form-field>
+                      <p *ngIf="!amazonFile">
+                        Drop Retail.OrderHistory.csv here
+                      </p>
+                      <p *ngIf="amazonFile">
+                        <strong>{{ amazonFile.name }}</strong>
+                        <span class="file-size">{{ formatFileSize(amazonFile.size) }}</span>
+                      </p>
+                    </div>
 
-                  <mat-form-field appearance="outline">
-                    <mat-label>End Date (optional)</mat-label>
-                    <input matInput [matDatepicker]="endPicker" [(ngModel)]="amazonEndDate">
-                    <mat-datepicker-toggle matSuffix [for]="endPicker"></mat-datepicker-toggle>
-                    <mat-datepicker #endPicker></mat-datepicker>
-                  </mat-form-field>
-                </div>
-              </div>
+                    <!-- Optional Date Filter -->
+                    <div class="date-filter" *ngIf="amazonFile">
+                      <mat-form-field appearance="outline">
+                        <mat-label>Start Date</mat-label>
+                        <input matInput [matDatepicker]="startPicker" [(ngModel)]="amazonStartDate">
+                        <mat-datepicker-toggle matSuffix [for]="startPicker"></mat-datepicker-toggle>
+                        <mat-datepicker #startPicker></mat-datepicker>
+                      </mat-form-field>
 
-              <!-- Progress -->
-              <div class="progress-section" *ngIf="amazonImporting">
-                <mat-progress-bar mode="indeterminate"></mat-progress-bar>
-                <p>Importing Amazon orders...</p>
-              </div>
+                      <mat-form-field appearance="outline">
+                        <mat-label>End Date</mat-label>
+                        <input matInput [matDatepicker]="endPicker" [(ngModel)]="amazonEndDate">
+                        <mat-datepicker-toggle matSuffix [for]="endPicker"></mat-datepicker-toggle>
+                        <mat-datepicker #endPicker></mat-datepicker>
+                      </mat-form-field>
+                    </div>
+                  </div>
 
-              <!-- Amazon Result -->
-              <div class="result-section" *ngIf="amazonResult">
-                <div class="result-card" [class.success]="amazonResult.success" [class.error]="!amazonResult.success">
-                  <mat-icon *ngIf="amazonResult.success">check_circle</mat-icon>
-                  <mat-icon *ngIf="!amazonResult.success">error</mat-icon>
-                  <div class="result-content">
-                    <h4>{{ amazonResult.message }}</h4>
-                    <div class="stats">
-                      <span><strong>{{ amazonResult.stats.newTransactions }}</strong> new orders imported</span>
-                      <span><strong>{{ amazonResult.stats.duplicatesSkipped }}</strong> duplicates skipped</span>
-                      <span *ngIf="amazonResult.stats.errors > 0" class="errors">
-                        <strong>{{ amazonResult.stats.errors }}</strong> errors
-                      </span>
+                  <!-- Progress -->
+                  <div class="progress-section" *ngIf="amazonImporting">
+                    <mat-progress-bar mode="indeterminate"></mat-progress-bar>
+                    <p>Importing orders...</p>
+                  </div>
+
+                  <!-- Result -->
+                  <div class="result-section" *ngIf="amazonResult">
+                    <div class="result-card" [class.success]="amazonResult.success" [class.error]="!amazonResult.success">
+                      <mat-icon *ngIf="amazonResult.success">check_circle</mat-icon>
+                      <mat-icon *ngIf="!amazonResult.success">error</mat-icon>
+                      <div class="result-content">
+                        <h4>{{ amazonResult.message }}</h4>
+                        <div class="stats">
+                          <span><strong>{{ amazonResult.stats.newTransactions }}</strong> imported</span>
+                          <span><strong>{{ amazonResult.stats.duplicatesSkipped }}</strong> skipped</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                <!-- Error Details -->
-                <mat-expansion-panel *ngIf="amazonResult.errors && amazonResult.errors.length > 0" class="error-panel">
-                  <mat-expansion-panel-header>
-                    <mat-panel-title>
-                      <mat-icon>warning</mat-icon>
-                      {{ amazonResult.errors.length }} parsing errors
-                    </mat-panel-title>
-                  </mat-expansion-panel-header>
-                  <ul>
-                    <li *ngFor="let error of amazonResult.errors.slice(0, 20)">{{ error }}</li>
-                    <li *ngIf="amazonResult.errors.length > 20">
-                      ... and {{ amazonResult.errors.length - 20 }} more
-                    </li>
-                  </ul>
-                </mat-expansion-panel>
+                <!-- Returns Section -->
+                <div class="amazon-section">
+                  <h3><mat-icon>currency_exchange</mat-icon> Returns</h3>
+
+                  <div class="upload-section">
+                    <input type="file" #amazonRefundsInput hidden accept=".csv" (change)="onAmazonRefundsFileSelected($event)">
+
+                    <div class="drop-zone small"
+                         [class.drag-over]="amazonRefundsDragOver"
+                         [class.has-file]="amazonRefundsFile"
+                         (click)="amazonRefundsInput.click()"
+                         (dragover)="onDragOver($event, 'amazonRefunds')"
+                         (dragleave)="onDragLeave($event, 'amazonRefunds')"
+                         (drop)="onDrop($event, 'amazonRefunds')">
+
+                      <mat-icon *ngIf="!amazonRefundsFile">cloud_upload</mat-icon>
+                      <mat-icon *ngIf="amazonRefundsFile" class="success">check_circle</mat-icon>
+
+                      <p *ngIf="!amazonRefundsFile">
+                        Drop Retail.CustomerReturns.csv here
+                      </p>
+                      <p *ngIf="amazonRefundsFile">
+                        <strong>{{ amazonRefundsFile.name }}</strong>
+                        <span class="file-size">{{ formatFileSize(amazonRefundsFile.size) }}</span>
+                      </p>
+                    </div>
+                  </div>
+
+                  <!-- Progress -->
+                  <div class="progress-section" *ngIf="amazonRefundsImporting">
+                    <mat-progress-bar mode="indeterminate"></mat-progress-bar>
+                    <p>Importing returns...</p>
+                  </div>
+
+                  <!-- Result -->
+                  <div class="result-section" *ngIf="amazonRefundsResult">
+                    <div class="result-card" [class.success]="amazonRefundsResult.success" [class.error]="!amazonRefundsResult.success">
+                      <mat-icon *ngIf="amazonRefundsResult.success">check_circle</mat-icon>
+                      <mat-icon *ngIf="!amazonRefundsResult.success">error</mat-icon>
+                      <div class="result-content">
+                        <h4>{{ amazonRefundsResult.message }}</h4>
+                        <div class="stats">
+                          <span><strong>{{ amazonRefundsResult.stats.newTransactions }}</strong> imported</span>
+                          <span><strong>{{ amazonRefundsResult.stats.duplicatesSkipped }}</strong> skipped</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </mat-tab>
@@ -592,6 +629,103 @@ interface PayPalImportResult {
     mat-dialog-actions {
       padding: 16px 24px;
     }
+
+    /* Amazon sections layout */
+    .amazon-content {
+      padding: 8px 0;
+    }
+
+    .amazon-sections {
+      display: flex;
+      gap: 16px;
+    }
+
+    .amazon-section {
+      flex: 1;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 12px;
+      background: #fafafa;
+    }
+
+    .amazon-section h3 {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 0 12px 0;
+      font-size: 14px;
+      font-weight: 500;
+      color: #333;
+    }
+
+    .amazon-section h3 mat-icon {
+      font-size: 20px;
+      width: 20px;
+      height: 20px;
+      color: #ff9800;
+    }
+
+    .amazon-section .upload-section {
+      margin: 0;
+    }
+
+    .drop-zone.small {
+      padding: 20px;
+    }
+
+    .drop-zone.small mat-icon {
+      font-size: 32px;
+      width: 32px;
+      height: 32px;
+    }
+
+    .drop-zone.small p {
+      margin: 8px 0 0;
+      font-size: 13px;
+    }
+
+    .amazon-section .date-filter {
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .amazon-section .date-filter mat-form-field {
+      width: 100%;
+    }
+
+    .amazon-section .progress-section {
+      margin: 12px 0;
+    }
+
+    .amazon-section .progress-section p {
+      font-size: 12px;
+    }
+
+    .amazon-section .result-section {
+      margin: 12px 0 0;
+    }
+
+    .amazon-section .result-card {
+      padding: 12px;
+    }
+
+    .amazon-section .result-card mat-icon {
+      font-size: 20px;
+      width: 20px;
+      height: 20px;
+    }
+
+    .amazon-section .result-content h4 {
+      font-size: 13px;
+      margin-bottom: 4px;
+    }
+
+    .amazon-section .stats {
+      flex-direction: column;
+      gap: 4px;
+      font-size: 12px;
+    }
   `]
 })
 export class ImportDialogComponent implements OnInit {
@@ -603,13 +737,19 @@ export class ImportDialogComponent implements OnInit {
   csvImporting = false;
   csvResult: { success: boolean; message: string; count?: number } | null = null;
 
-  // Amazon state
+  // Amazon Orders state
   amazonFile: File | null = null;
   amazonDragOver = false;
   amazonImporting = false;
   amazonStartDate?: Date;
   amazonEndDate?: Date;
   amazonResult: AmazonImportResult | null = null;
+
+  // Amazon Refunds state
+  amazonRefundsFile: File | null = null;
+  amazonRefundsDragOver = false;
+  amazonRefundsImporting = false;
+  amazonRefundsResult: AmazonImportResult | null = null;
 
   // PayPal state
   paypalFile: File | null = null;
@@ -638,13 +778,13 @@ export class ImportDialogComponent implements OnInit {
 
   get canImport(): boolean {
     if (this.selectedTab === 0) return !!this.csvFile;
-    if (this.selectedTab === 1) return !!this.amazonFile;
+    if (this.selectedTab === 1) return !!this.amazonFile || !!this.amazonRefundsFile;
     if (this.selectedTab === 2) return !!this.paypalFile;
     return false;
   }
 
   get isImporting(): boolean {
-    return this.csvImporting || this.amazonImporting || this.paypalImporting;
+    return this.csvImporting || this.amazonImporting || this.amazonRefundsImporting || this.paypalImporting;
   }
 
   close(result?: ImportDialogResult) {
@@ -652,31 +792,35 @@ export class ImportDialogComponent implements OnInit {
   }
 
   // Drag & drop handlers
-  onDragOver(event: DragEvent, type: 'csv' | 'amazon' | 'paypal') {
+  onDragOver(event: DragEvent, type: 'csv' | 'amazon' | 'amazonRefunds' | 'paypal') {
     event.preventDefault();
     event.stopPropagation();
     if (type === 'csv') {
       this.csvDragOver = true;
     } else if (type === 'amazon') {
       this.amazonDragOver = true;
+    } else if (type === 'amazonRefunds') {
+      this.amazonRefundsDragOver = true;
     } else {
       this.paypalDragOver = true;
     }
   }
 
-  onDragLeave(event: DragEvent, type: 'csv' | 'amazon' | 'paypal') {
+  onDragLeave(event: DragEvent, type: 'csv' | 'amazon' | 'amazonRefunds' | 'paypal') {
     event.preventDefault();
     event.stopPropagation();
     if (type === 'csv') {
       this.csvDragOver = false;
     } else if (type === 'amazon') {
       this.amazonDragOver = false;
+    } else if (type === 'amazonRefunds') {
+      this.amazonRefundsDragOver = false;
     } else {
       this.paypalDragOver = false;
     }
   }
 
-  onDrop(event: DragEvent, type: 'csv' | 'amazon' | 'paypal') {
+  onDrop(event: DragEvent, type: 'csv' | 'amazon' | 'amazonRefunds' | 'paypal') {
     event.preventDefault();
     event.stopPropagation();
 
@@ -684,6 +828,8 @@ export class ImportDialogComponent implements OnInit {
       this.csvDragOver = false;
     } else if (type === 'amazon') {
       this.amazonDragOver = false;
+    } else if (type === 'amazonRefunds') {
+      this.amazonRefundsDragOver = false;
     } else {
       this.paypalDragOver = false;
     }
@@ -701,6 +847,9 @@ export class ImportDialogComponent implements OnInit {
         } else if (type === 'amazon') {
           this.amazonFile = file;
           this.amazonResult = null;
+        } else if (type === 'amazonRefunds') {
+          this.amazonRefundsFile = file;
+          this.amazonRefundsResult = null;
         }
       } else {
         this.snackBar.open('Please select a valid file', '', { duration: 3000 });
@@ -725,6 +874,14 @@ export class ImportDialogComponent implements OnInit {
     }
   }
 
+  onAmazonRefundsFileSelected(event: Event) {
+    const input = event.target as HTMLInputElement;
+    if (input.files?.length) {
+      this.amazonRefundsFile = input.files[0];
+      this.amazonRefundsResult = null;
+    }
+  }
+
   onPayPalFileSelected(event: Event) {
     const input = event.target as HTMLInputElement;
     if (input.files?.length) {
@@ -742,6 +899,8 @@ export class ImportDialogComponent implements OnInit {
       this.amazonResult = null;
       this.amazonStartDate = undefined;
       this.amazonEndDate = undefined;
+      this.amazonRefundsFile = null;
+      this.amazonRefundsResult = null;
     } else if (this.selectedTab === 2) {
       this.paypalFile = null;
       this.paypalResult = null;
@@ -752,7 +911,11 @@ export class ImportDialogComponent implements OnInit {
     if (this.selectedTab === 0) {
       await this.importCsv();
     } else if (this.selectedTab === 1) {
-      await this.importAmazon();
+      // Import both orders and refunds if files are selected
+      const promises: Promise<void>[] = [];
+      if (this.amazonFile) promises.push(this.importAmazon());
+      if (this.amazonRefundsFile) promises.push(this.importAmazonRefunds());
+      await Promise.all(promises);
     } else if (this.selectedTab === 2) {
       await this.importPayPal();
     }
@@ -835,6 +998,40 @@ export class ImportDialogComponent implements OnInit {
     }
 
     this.amazonImporting = false;
+  }
+
+  private async importAmazonRefunds() {
+    if (!this.amazonRefundsFile) return;
+
+    this.amazonRefundsImporting = true;
+    this.amazonRefundsResult = null;
+
+    try {
+      const csvData = await this.amazonRefundsFile.text();
+
+      const result = await this.http.post<AmazonImportResult>(
+        `${environment.apiUrl}/import/amazon/refunds`,
+        { csvData }
+      ).toPromise();
+
+      this.amazonRefundsResult = result!;
+    } catch (error: any) {
+      this.amazonRefundsResult = {
+        success: false,
+        message: error.error?.error || 'Refunds import failed',
+        stats: {
+          totalRows: 0,
+          imported: 0,
+          skipped: 0,
+          errors: 1,
+          newTransactions: 0,
+          duplicatesSkipped: 0
+        },
+        errors: error.error?.details ? [error.error.details] : ['Unknown error occurred']
+      };
+    }
+
+    this.amazonRefundsImporting = false;
   }
 
   private async importPayPal() {
