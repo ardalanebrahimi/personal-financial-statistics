@@ -71,6 +71,31 @@ function runMigrations(): void {
     `);
     console.log('[Database] Migration complete: detected_platform column added');
   }
+
+  // Migration: Add subcategory and categorization tracking fields
+  if (!txColumnNames.includes('subcategory')) {
+    console.log('[Database] Running migration: Adding categorization fields to transactions table...');
+    db.exec(`
+      ALTER TABLE transactions ADD COLUMN subcategory TEXT;
+      ALTER TABLE transactions ADD COLUMN category_confidence INTEGER;
+      ALTER TABLE transactions ADD COLUMN categorized_at TEXT;
+      ALTER TABLE transactions ADD COLUMN categorized_by TEXT CHECK(categorized_by IS NULL OR categorized_by IN ('ai', 'user', 'rule'));
+    `);
+    console.log('[Database] Migration complete: categorization fields added');
+  }
+
+  // Migration: Add hierarchy fields to categories table
+  const categoryColumns = db.prepare(`PRAGMA table_info(categories)`).all() as any[];
+  const catColumnNames = categoryColumns.map((c: any) => c.name);
+
+  if (!catColumnNames.includes('parent_id')) {
+    console.log('[Database] Running migration: Adding hierarchy fields to categories table...');
+    db.exec(`
+      ALTER TABLE categories ADD COLUMN parent_id TEXT;
+      ALTER TABLE categories ADD COLUMN is_subcategory INTEGER DEFAULT 0;
+    `);
+    console.log('[Database] Migration complete: category hierarchy fields added');
+  }
 }
 
 // Run migrations before schema (in case table exists but missing columns)
@@ -121,7 +146,13 @@ CREATE TABLE IF NOT EXISTS transactions (
   linked_order_ids TEXT DEFAULT '[]',  -- JSON array of IDs of context-only transactions linked to this bank transaction
 
   -- Platform detection
-  detected_platform TEXT CHECK(detected_platform IS NULL OR detected_platform IN ('amazon', 'paypal'))
+  detected_platform TEXT CHECK(detected_platform IS NULL OR detected_platform IN ('amazon', 'paypal')),
+
+  -- Categorization tracking
+  subcategory TEXT,
+  category_confidence INTEGER,  -- 0-100
+  categorized_at TEXT,
+  categorized_by TEXT CHECK(categorized_by IS NULL OR categorized_by IN ('ai', 'user', 'rule'))
 );
 
 -- Categories table
@@ -130,7 +161,9 @@ CREATE TABLE IF NOT EXISTS categories (
   name TEXT NOT NULL UNIQUE,
   description TEXT,
   color TEXT,
-  keywords TEXT -- JSON array
+  keywords TEXT, -- JSON array
+  parent_id TEXT,  -- For subcategories
+  is_subcategory INTEGER DEFAULT 0
 );
 
 -- Connectors table
@@ -205,6 +238,32 @@ CREATE TABLE IF NOT EXISTS jobs (
   file_path TEXT
 );
 
+-- Categorization jobs table (extended job data for AI categorization)
+CREATE TABLE IF NOT EXISTS categorization_jobs (
+  id TEXT PRIMARY KEY,
+  status TEXT NOT NULL CHECK(status IN ('pending', 'processing', 'paused', 'completed', 'failed', 'cancelled')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  started_at TEXT,
+  completed_at TEXT,
+
+  -- Scope
+  transaction_ids TEXT NOT NULL DEFAULT '[]', -- JSON array
+  include_already_categorized INTEGER DEFAULT 0,
+
+  -- Progress
+  total_count INTEGER DEFAULT 0,
+  processed_count INTEGER DEFAULT 0,
+  applied_count INTEGER DEFAULT 0,
+  skipped_count INTEGER DEFAULT 0,
+  corrected_count INTEGER DEFAULT 0,
+
+  -- Results and conversation (JSON)
+  results TEXT DEFAULT '[]',
+  conversation_history TEXT DEFAULT '[]',
+  errors TEXT DEFAULT '[]'
+);
+
 -- Recurring patterns table
 CREATE TABLE IF NOT EXISTS recurring_patterns (
   id TEXT PRIMARY KEY,
@@ -237,6 +296,7 @@ CREATE INDEX IF NOT EXISTS idx_rules_enabled ON rules(enabled, priority);
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_recurring_beneficiary ON recurring_patterns(beneficiary);
 CREATE INDEX IF NOT EXISTS idx_recurring_active ON recurring_patterns(is_active);
+CREATE INDEX IF NOT EXISTS idx_categorization_jobs_status ON categorization_jobs(status);
 `;
 
 // Initialize schema
@@ -273,6 +333,11 @@ export interface StoredTransaction {
   linkedOrderIds?: string[];   // IDs of context-only transactions (orders) linked to this bank transaction
   // Platform detection
   detectedPlatform?: 'amazon' | 'paypal' | null;  // Auto-detected payment platform
+  // Categorization tracking
+  subcategory?: string;
+  categoryConfidence?: number;  // 0-100
+  categorizedAt?: string;
+  categorizedBy?: 'ai' | 'user' | 'rule';
 }
 
 export function getAllTransactions(): StoredTransaction[] {
@@ -305,12 +370,14 @@ export function insertTransaction(tx: Omit<StoredTransaction, 'timestamp'>): voi
       source_connector_type, source_external_id, source_imported_at,
       match_id, match_is_primary, match_pattern_type, match_source,
       match_confidence, match_linked_ids, transaction_type, exclude_from_stats,
-      is_context_only, linked_order_ids, detected_platform
+      is_context_only, linked_order_ids, detected_platform,
+      subcategory, category_confidence, categorized_at, categorized_by
     ) VALUES (
       ?, ?, ?, ?, ?, ?, ?,
       ?, ?, ?,
       ?, ?, ?, ?, ?, ?, ?, ?,
-      ?, ?, ?
+      ?, ?, ?,
+      ?, ?, ?, ?
     )
   `);
 
@@ -335,7 +402,11 @@ export function insertTransaction(tx: Omit<StoredTransaction, 'timestamp'>): voi
     tx.excludeFromStats ? 1 : 0,
     tx.isContextOnly ? 1 : 0,
     tx.linkedOrderIds ? JSON.stringify(tx.linkedOrderIds) : '[]',
-    tx.detectedPlatform || null
+    tx.detectedPlatform || null,
+    tx.subcategory || null,
+    tx.categoryConfidence || null,
+    tx.categorizedAt || null,
+    tx.categorizedBy || null
   );
 }
 
@@ -347,6 +418,7 @@ export function updateTransaction(tx: StoredTransaction): void {
       match_id = ?, match_is_primary = ?, match_pattern_type = ?, match_source = ?,
       match_confidence = ?, match_linked_ids = ?, transaction_type = ?, exclude_from_stats = ?,
       is_context_only = ?, linked_order_ids = ?, detected_platform = ?,
+      subcategory = ?, category_confidence = ?, categorized_at = ?, categorized_by = ?,
       timestamp = ?
     WHERE id = ?
   `);
@@ -371,6 +443,10 @@ export function updateTransaction(tx: StoredTransaction): void {
     tx.isContextOnly ? 1 : 0,
     tx.linkedOrderIds ? JSON.stringify(tx.linkedOrderIds) : '[]',
     tx.detectedPlatform || null,
+    tx.subcategory || null,
+    tx.categoryConfidence || null,
+    tx.categorizedAt || null,
+    tx.categorizedBy || null,
     new Date().toISOString(),
     tx.id
   );
@@ -476,6 +552,20 @@ function rowToTransaction(row: any): StoredTransaction {
   // Platform detection
   if (row.detected_platform) {
     tx.detectedPlatform = row.detected_platform;
+  }
+
+  // Categorization tracking
+  if (row.subcategory) {
+    tx.subcategory = row.subcategory;
+  }
+  if (row.category_confidence !== null && row.category_confidence !== undefined) {
+    tx.categoryConfidence = row.category_confidence;
+  }
+  if (row.categorized_at) {
+    tx.categorizedAt = row.categorized_at;
+  }
+  if (row.categorized_by) {
+    tx.categorizedBy = row.categorized_by;
   }
 
   return tx;
@@ -1233,6 +1323,238 @@ function rowToRecurringPattern(row: any): RecurringPattern {
     description: row.description,
     createdAt: row.created_at,
     updatedAt: row.updated_at
+  };
+}
+
+// ==================== CATEGORIZATION JOB OPERATIONS ====================
+
+import type {
+  CategorizationJob,
+  CategorizationResult,
+  ConversationMessage
+} from '../jobs/categorization-job';
+
+export function createCategorizationJob(job: Partial<CategorizationJob> & { transactionIds: string[] }): CategorizationJob {
+  const now = new Date().toISOString();
+  const newJob: CategorizationJob = {
+    id: job.id || crypto.randomUUID(),
+    status: 'pending',
+    createdAt: now,
+    updatedAt: now,
+    transactionIds: job.transactionIds,
+    includeAlreadyCategorized: job.includeAlreadyCategorized || false,
+    totalCount: job.transactionIds.length,
+    processedCount: 0,
+    appliedCount: 0,
+    skippedCount: 0,
+    correctedCount: 0,
+    results: [],
+    conversationHistory: [],
+    errors: []
+  };
+
+  db.prepare(`
+    INSERT INTO categorization_jobs (
+      id, status, created_at, updated_at,
+      transaction_ids, include_already_categorized,
+      total_count, processed_count, applied_count, skipped_count, corrected_count,
+      results, conversation_history, errors
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    newJob.id,
+    newJob.status,
+    newJob.createdAt,
+    newJob.updatedAt,
+    JSON.stringify(newJob.transactionIds),
+    newJob.includeAlreadyCategorized ? 1 : 0,
+    newJob.totalCount,
+    newJob.processedCount,
+    newJob.appliedCount,
+    newJob.skippedCount,
+    newJob.correctedCount,
+    JSON.stringify(newJob.results),
+    JSON.stringify(newJob.conversationHistory),
+    JSON.stringify(newJob.errors)
+  );
+
+  return newJob;
+}
+
+export function getCategorizationJob(id: string): CategorizationJob | null {
+  const row = db.prepare(`SELECT * FROM categorization_jobs WHERE id = ?`).get(id) as any;
+  return row ? rowToCategorizationJob(row) : null;
+}
+
+export function getActiveCategorizationJobs(): CategorizationJob[] {
+  const rows = db.prepare(`
+    SELECT * FROM categorization_jobs
+    WHERE status IN ('pending', 'processing', 'paused')
+    ORDER BY created_at DESC
+  `).all() as any[];
+  return rows.map(rowToCategorizationJob);
+}
+
+export function getRecentCategorizationJobs(limit: number = 10): CategorizationJob[] {
+  const rows = db.prepare(`
+    SELECT * FROM categorization_jobs
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).all(limit) as any[];
+  return rows.map(rowToCategorizationJob);
+}
+
+export function updateCategorizationJob(job: CategorizationJob): void {
+  db.prepare(`
+    UPDATE categorization_jobs SET
+      status = ?, updated_at = ?, started_at = ?, completed_at = ?,
+      transaction_ids = ?, include_already_categorized = ?,
+      total_count = ?, processed_count = ?, applied_count = ?, skipped_count = ?, corrected_count = ?,
+      results = ?, conversation_history = ?, errors = ?
+    WHERE id = ?
+  `).run(
+    job.status,
+    new Date().toISOString(),
+    job.startedAt || null,
+    job.completedAt || null,
+    JSON.stringify(job.transactionIds),
+    job.includeAlreadyCategorized ? 1 : 0,
+    job.totalCount,
+    job.processedCount,
+    job.appliedCount,
+    job.skippedCount,
+    job.correctedCount,
+    JSON.stringify(job.results),
+    JSON.stringify(job.conversationHistory),
+    JSON.stringify(job.errors),
+    job.id
+  );
+}
+
+export function updateCategorizationJobProgress(
+  id: string,
+  processedCount: number,
+  appliedCount: number,
+  skippedCount: number
+): void {
+  db.prepare(`
+    UPDATE categorization_jobs SET
+      processed_count = ?, applied_count = ?, skipped_count = ?,
+      updated_at = ?, status = 'processing',
+      started_at = COALESCE(started_at, ?)
+    WHERE id = ?
+  `).run(processedCount, appliedCount, skippedCount, new Date().toISOString(), new Date().toISOString(), id);
+}
+
+export function addCategorizationResult(id: string, result: CategorizationResult): void {
+  const job = getCategorizationJob(id);
+  if (!job) return;
+
+  job.results.push(result);
+  job.processedCount++;
+  if (result.status === 'applied') job.appliedCount++;
+  if (result.status === 'skipped' || result.status === 'error') job.skippedCount++;
+  if (result.status === 'corrected') job.correctedCount++;
+
+  db.prepare(`
+    UPDATE categorization_jobs SET
+      results = ?, processed_count = ?, applied_count = ?, skipped_count = ?, corrected_count = ?,
+      updated_at = ?
+    WHERE id = ?
+  `).run(
+    JSON.stringify(job.results),
+    job.processedCount,
+    job.appliedCount,
+    job.skippedCount,
+    job.correctedCount,
+    new Date().toISOString(),
+    id
+  );
+}
+
+export function addCategorizationConversationMessage(id: string, message: ConversationMessage): void {
+  const job = getCategorizationJob(id);
+  if (!job) return;
+
+  job.conversationHistory.push(message);
+  db.prepare(`
+    UPDATE categorization_jobs SET conversation_history = ?, updated_at = ?
+    WHERE id = ?
+  `).run(JSON.stringify(job.conversationHistory), new Date().toISOString(), id);
+}
+
+export function addCategorizationError(id: string, error: string): void {
+  const job = getCategorizationJob(id);
+  if (!job) return;
+
+  job.errors.push(error);
+  db.prepare(`
+    UPDATE categorization_jobs SET errors = ?, updated_at = ?
+    WHERE id = ?
+  `).run(JSON.stringify(job.errors), new Date().toISOString(), id);
+}
+
+export function completeCategorizationJob(id: string): void {
+  db.prepare(`
+    UPDATE categorization_jobs SET status = 'completed', completed_at = ?, updated_at = ?
+    WHERE id = ?
+  `).run(new Date().toISOString(), new Date().toISOString(), id);
+}
+
+export function failCategorizationJob(id: string, error: string): void {
+  const job = getCategorizationJob(id);
+  if (job) {
+    job.errors.push(error);
+    db.prepare(`
+      UPDATE categorization_jobs SET status = 'failed', completed_at = ?, updated_at = ?, errors = ?
+      WHERE id = ?
+    `).run(new Date().toISOString(), new Date().toISOString(), JSON.stringify(job.errors), id);
+  }
+}
+
+export function cancelCategorizationJob(id: string): void {
+  db.prepare(`
+    UPDATE categorization_jobs SET status = 'cancelled', completed_at = ?, updated_at = ?
+    WHERE id = ?
+  `).run(new Date().toISOString(), new Date().toISOString(), id);
+}
+
+export function pauseCategorizationJob(id: string): void {
+  db.prepare(`
+    UPDATE categorization_jobs SET status = 'paused', updated_at = ?
+    WHERE id = ?
+  `).run(new Date().toISOString(), id);
+}
+
+export function resumeCategorizationJob(id: string): void {
+  db.prepare(`
+    UPDATE categorization_jobs SET status = 'processing', updated_at = ?
+    WHERE id = ?
+  `).run(new Date().toISOString(), id);
+}
+
+export function deleteCategorizationJob(id: string): boolean {
+  const result = db.prepare(`DELETE FROM categorization_jobs WHERE id = ?`).run(id);
+  return result.changes > 0;
+}
+
+function rowToCategorizationJob(row: any): CategorizationJob {
+  return {
+    id: row.id,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    startedAt: row.started_at || undefined,
+    completedAt: row.completed_at || undefined,
+    transactionIds: JSON.parse(row.transaction_ids || '[]'),
+    includeAlreadyCategorized: row.include_already_categorized === 1,
+    totalCount: row.total_count,
+    processedCount: row.processed_count,
+    appliedCount: row.applied_count,
+    skippedCount: row.skipped_count,
+    correctedCount: row.corrected_count,
+    results: JSON.parse(row.results || '[]'),
+    conversationHistory: JSON.parse(row.conversation_history || '[]'),
+    errors: JSON.parse(row.errors || '[]')
   };
 }
 

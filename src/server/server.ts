@@ -31,6 +31,18 @@ import { encryptCredentials, decryptCredentials } from './utils/encryption';
 // Job processing imports
 import { processCsvImport, cancelImportJob } from './jobs/csv-import-processor';
 
+// Categorization job imports
+import type {
+  CategorizationJob,
+  CategorizationResult,
+  StartCategorizationRequest,
+  CorrectCategorizationRequest,
+  CategorizationChatRequest,
+  CategorizationJobStatus
+} from './jobs/categorization-job';
+import { CATEGORIZATION_PROMPT, isGenericCategory, GENERIC_CATEGORIES_TO_AVOID } from './jobs/categorization-job';
+import { startCategorizationProcessor, cancelCategorizationProcessor, isJobProcessing } from './jobs/categorization-processor';
+
 // Configure multer for file uploads
 const uploadDir = path.join(__dirname, '../data/uploads');
 if (!fs.existsSync(uploadDir)) {
@@ -715,6 +727,339 @@ app.post('/jobs/:id/cancel', (req: Request, res: Response) => {
     }
   } catch (error) {
     res.status(500).json({ error: 'Failed to cancel job' });
+  }
+});
+
+// ==================== CATEGORIZATION JOB ENDPOINTS ====================
+
+// POST /categorization/jobs - Start a new categorization job
+app.post('/categorization/jobs', async (req: Request, res: Response) => {
+  try {
+    const request: StartCategorizationRequest = req.body;
+
+    // Validate request
+    if (!request.transactionIds || request.transactionIds.length === 0) {
+      res.status(400).json({ error: 'No transactions specified for categorization' });
+      return;
+    }
+
+    // Get the transactions to categorize
+    const allTransactions = db.getAllTransactions();
+    let transactionIds = request.transactionIds;
+
+    // Filter based on scope if specified
+    if (request.scope === 'uncategorized') {
+      transactionIds = allTransactions
+        .filter(tx => !tx.category || tx.category === '')
+        .map(tx => tx.id);
+    } else if (request.scope === 'all') {
+      transactionIds = allTransactions
+        .filter(tx => !tx.isContextOnly)
+        .map(tx => tx.id);
+    }
+
+    // Filter out already categorized if not including them
+    if (!request.includeAlreadyCategorized) {
+      const categorizedIds = new Set(
+        allTransactions
+          .filter(tx => tx.category && tx.category !== '')
+          .map(tx => tx.id)
+      );
+      transactionIds = transactionIds.filter(id => !categorizedIds.has(id));
+    }
+
+    if (transactionIds.length === 0) {
+      res.status(400).json({ error: 'No transactions to categorize after filtering' });
+      return;
+    }
+
+    // Create the categorization job
+    const job = db.createCategorizationJob({
+      transactionIds,
+      includeAlreadyCategorized: request.includeAlreadyCategorized || false
+    });
+
+    console.log(`[Categorization] Created job ${job.id} with ${transactionIds.length} transactions`);
+
+    // Start the background categorization processor
+    // Run in background (non-blocking)
+    startCategorizationProcessor(job.id).catch(error => {
+      console.error(`[Categorization] Processor failed for job ${job.id}:`, error);
+    });
+
+    res.json({
+      success: true,
+      job: {
+        id: job.id,
+        status: job.status,
+        totalCount: job.totalCount,
+        processedCount: job.processedCount
+      }
+    });
+  } catch (error: any) {
+    console.error('[Categorization] Failed to create job:', error);
+    res.status(500).json({ error: 'Failed to create categorization job', details: error.message });
+  }
+});
+
+// GET /categorization/jobs - Get all categorization jobs
+app.get('/categorization/jobs', (req: Request, res: Response) => {
+  try {
+    const limit = parseInt(req.query['limit'] as string) || 10;
+    const jobs = db.getRecentCategorizationJobs(limit);
+    res.json({ jobs });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get categorization jobs' });
+  }
+});
+
+// GET /categorization/jobs/active - Get active categorization jobs
+app.get('/categorization/jobs/active', (req: Request, res: Response) => {
+  try {
+    const jobs = db.getActiveCategorizationJobs();
+    res.json({ jobs });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get active categorization jobs' });
+  }
+});
+
+// GET /categorization/jobs/:id - Get specific categorization job
+app.get('/categorization/jobs/:id', (req: Request, res: Response) => {
+  try {
+    const job = db.getCategorizationJob(req.params['id']);
+    if (!job) {
+      res.status(404).json({ error: 'Categorization job not found' });
+      return;
+    }
+
+    // Build status response with recent results
+    const recentResults = job.results.slice(-20); // Last 20 results
+    const status: CategorizationJobStatus = {
+      id: job.id,
+      status: job.status,
+      progress: job.totalCount > 0 ? Math.round((job.processedCount / job.totalCount) * 100) : 0,
+      totalCount: job.totalCount,
+      processedCount: job.processedCount,
+      appliedCount: job.appliedCount,
+      correctedCount: job.correctedCount,
+      recentResults
+    };
+
+    res.json({ job, status });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get categorization job' });
+  }
+});
+
+// PUT /categorization/jobs/:id/pause - Pause a categorization job
+app.put('/categorization/jobs/:id/pause', (req: Request, res: Response) => {
+  try {
+    const job = db.getCategorizationJob(req.params['id']);
+    if (!job) {
+      res.status(404).json({ error: 'Categorization job not found' });
+      return;
+    }
+
+    if (job.status !== 'processing') {
+      res.status(400).json({ error: 'Job is not processing' });
+      return;
+    }
+
+    db.pauseCategorizationJob(job.id);
+    res.json({ success: true, message: 'Job paused' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to pause job' });
+  }
+});
+
+// PUT /categorization/jobs/:id/resume - Resume a paused categorization job
+app.put('/categorization/jobs/:id/resume', (req: Request, res: Response) => {
+  try {
+    const job = db.getCategorizationJob(req.params['id']);
+    if (!job) {
+      res.status(404).json({ error: 'Categorization job not found' });
+      return;
+    }
+
+    if (job.status !== 'paused') {
+      res.status(400).json({ error: 'Job is not paused' });
+      return;
+    }
+
+    db.resumeCategorizationJob(job.id);
+
+    // Restart the processor
+    startCategorizationProcessor(job.id).catch(error => {
+      console.error(`[Categorization] Failed to resume processor for job ${job.id}:`, error);
+    });
+
+    res.json({ success: true, message: 'Job resumed' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to resume job' });
+  }
+});
+
+// DELETE /categorization/jobs/:id - Cancel a categorization job
+app.delete('/categorization/jobs/:id', (req: Request, res: Response) => {
+  try {
+    const job = db.getCategorizationJob(req.params['id']);
+    if (!job) {
+      res.status(404).json({ error: 'Categorization job not found' });
+      return;
+    }
+
+    if (job.status === 'completed' || job.status === 'cancelled') {
+      res.status(400).json({ error: 'Job is already completed or cancelled' });
+      return;
+    }
+
+    // Cancel the processor if it's running
+    cancelCategorizationProcessor(job.id);
+
+    db.cancelCategorizationJob(job.id);
+    res.json({ success: true, message: 'Job cancelled' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to cancel job' });
+  }
+});
+
+// POST /categorization/jobs/:id/correct - Correct a categorization result
+app.post('/categorization/jobs/:id/correct', async (req: Request, res: Response) => {
+  try {
+    const request: CorrectCategorizationRequest = req.body;
+    const jobId = req.params['id'];
+
+    const job = db.getCategorizationJob(jobId);
+    if (!job) {
+      res.status(404).json({ error: 'Categorization job not found' });
+      return;
+    }
+
+    // Find the result for this transaction
+    const resultIndex = job.results.findIndex(r => r.transactionId === request.transactionId);
+    if (resultIndex === -1) {
+      res.status(404).json({ error: 'Transaction result not found in job' });
+      return;
+    }
+
+    // Update the result with the correction
+    const result = job.results[resultIndex];
+    result.status = 'corrected';
+    result.correctedCategory = request.correctedCategory;
+    result.correctedSubcategory = request.correctedSubcategory;
+    result.correctionReason = request.reason;
+
+    // Update the job
+    job.correctedCount++;
+    db.updateCategorizationJob(job);
+
+    // Apply the correction to the actual transaction
+    const transaction = db.getTransactionById(request.transactionId);
+    if (transaction) {
+      transaction.category = request.correctedCategory;
+      transaction.subcategory = request.correctedSubcategory;
+      transaction.categorizedAt = new Date().toISOString();
+      transaction.categorizedBy = 'user';
+      transaction.categoryConfidence = 100; // User corrections are 100% confident
+      db.updateTransaction(transaction);
+
+      // Optionally create a rule from this correction
+      if (request.createRule) {
+        // Create a rule from this correction (use rules engine)
+        try {
+          const newRule = rulesEngine.createRuleFromCorrection(
+            {
+              description: transaction.description,
+              beneficiary: transaction.beneficiary,
+              amount: transaction.amount
+            },
+            result.suggestedCategory,
+            request.correctedCategory,
+            request.reason
+          );
+          console.log(`[Categorization] Created rule from correction: ${newRule.id}`);
+        } catch (ruleError) {
+          console.error('[Categorization] Failed to create rule:', ruleError);
+        }
+      }
+    }
+
+    res.json({ success: true, message: 'Correction applied' });
+  } catch (error: any) {
+    console.error('[Categorization] Failed to apply correction:', error);
+    res.status(500).json({ error: 'Failed to apply correction', details: error.message });
+  }
+});
+
+// POST /categorization/jobs/:id/chat - Chat about a categorization
+app.post('/categorization/jobs/:id/chat', async (req: Request, res: Response) => {
+  try {
+    const request: CategorizationChatRequest = req.body;
+    const jobId = req.params['id'];
+
+    const job = db.getCategorizationJob(jobId);
+    if (!job) {
+      res.status(404).json({ error: 'Categorization job not found' });
+      return;
+    }
+
+    // Add user message to conversation
+    const userMessage = {
+      id: crypto.randomUUID(),
+      role: 'user' as const,
+      content: request.message,
+      timestamp: new Date().toISOString(),
+      relatedTransactionId: request.transactionId
+    };
+    db.addCategorizationConversationMessage(jobId, userMessage);
+
+    // Get context for AI response
+    let context = '';
+    if (request.transactionId) {
+      const transaction = db.getTransactionById(request.transactionId);
+      const result = job.results.find(r => r.transactionId === request.transactionId);
+      if (transaction && result) {
+        context = `
+Transaction details:
+- Description: ${transaction.description}
+- Amount: ${transaction.amount} EUR
+- Beneficiary: ${transaction.beneficiary || 'N/A'}
+- Date: ${transaction.date}
+- Current AI suggestion: ${result.suggestedCategory}${result.suggestedSubcategory ? ' > ' + result.suggestedSubcategory : ''}
+- Confidence: ${result.confidence}%
+- Reasoning: ${result.reasoning}
+`;
+      }
+    }
+
+    // Use AI assistant to respond
+    if (!aiAssistant) {
+      aiAssistant = new AIAssistant(process.env['OPENAI_API_KEY'] || '');
+    }
+
+    const response = await aiAssistant.chat(
+      `${context}\n\nUser question: ${request.message}`,
+      { currentView: 'categorization', selectedTransaction: request.transactionId }
+    );
+
+    // Add assistant response to conversation
+    const assistantMessage = {
+      id: crypto.randomUUID(),
+      role: 'assistant' as const,
+      content: response.message,
+      timestamp: new Date().toISOString(),
+      relatedTransactionId: request.transactionId
+    };
+    db.addCategorizationConversationMessage(jobId, assistantMessage);
+
+    res.json({
+      success: true,
+      message: response.message,
+      conversationHistory: [...job.conversationHistory, userMessage, assistantMessage]
+    });
+  } catch (error: any) {
+    console.error('[Categorization] Chat failed:', error);
+    res.status(500).json({ error: 'Failed to process chat', details: error.message });
   }
 });
 

@@ -26,6 +26,7 @@ import { TransactionService } from '../../services/transaction.service';
 import { CategoryService } from '../../services/category.service';
 import { AIContextService } from '../../services/ai-context.service';
 import { AIService } from '../../services/ai.service';
+import { CategorizationService } from '../../services/categorization.service';
 import { Transaction, Category } from '../../core/models/transaction.model';
 import { TransactionCardComponent } from './transaction-card.component';
 import { MergeDialogComponent } from './merge-dialog.component';
@@ -34,6 +35,8 @@ import { TransactionDetailDialogComponent, TransactionDetailDialogResult } from 
 import { ImportDialogComponent, ImportDialogResult } from './import-dialog.component';
 import { DuplicatesDialogComponent, DuplicatesDialogResult } from './duplicates-dialog.component';
 import { MatchingOverviewDialogComponent } from './matching-overview-dialog.component';
+import { CategorizationDialogComponent } from './categorization-dialog.component';
+import { CategorizationProgressComponent } from '../../shared/categorization-progress/categorization-progress.component';
 
 interface UndoAction {
   type: 'category' | 'merge' | 'split' | 'delete' | 'edit';
@@ -66,7 +69,8 @@ interface UndoAction {
     MatProgressBarModule,
     MatCheckboxModule,
     DragDropModule,
-    TransactionCardComponent
+    TransactionCardComponent,
+    CategorizationProgressComponent
   ],
   template: `
     <div class="transactions-container">
@@ -134,7 +138,14 @@ interface UndoAction {
               <mat-icon>filter_list</mat-icon>
               <span>All Filtered ({{ filteredTransactions.length }})</span>
             </button>
+            <mat-divider></mat-divider>
+            <button mat-menu-item (click)="openCategorizationDialog()">
+              <mat-icon>visibility</mat-icon>
+              <span>View Progress</span>
+            </button>
           </mat-menu>
+          <!-- Categorization Progress Indicator -->
+          <app-categorization-progress (openDialog)="openCategorizationDialog()"></app-categorization-progress>
           <button mat-button (click)="exportCSV()">
             <mat-icon>download</mat-icon>
             Export
@@ -905,6 +916,7 @@ export class TransactionsComponent implements OnInit, OnDestroy {
     private categoryService: CategoryService,
     private aiContextService: AIContextService,
     private aiService: AIService,
+    private categorizationService: CategorizationService,
     private snackBar: MatSnackBar,
     private dialog: MatDialog
   ) {}
@@ -1730,66 +1742,51 @@ export class TransactionsComponent implements OnInit, OnDestroy {
       this.snackBar.open('No transactions to categorize', '', { duration: 2000 });
       return;
     }
-    await this.categorizeTransactions(toCategorize);
+    // Filtered includes all transactions (even already categorized ones)
+    await this.categorizeTransactions(toCategorize, true);
   }
 
-  private async categorizeTransactions(transactions: Transaction[]) {
-    this.isCategorizing = true;
-    this.categorizationProgress = { current: 0, total: transactions.length };
+  private async categorizeTransactions(transactions: Transaction[], includeAlreadyCategorized: boolean = false) {
+    // Use the new backend-based categorization system
+    const transactionIds = transactions.map(t => t.id);
 
-    let successCount = 0;
-    let errorCount = 0;
+    try {
+      // Start the categorization job on the backend
+      const job = await this.categorizationService.startCategorization({
+        transactionIds,
+        includeAlreadyCategorized
+      });
 
-    for (const transaction of transactions) {
-      try {
-        // Get linked order details if available
-        let linkedOrderDetails: string[] | undefined;
-        if (transaction.linkedOrderIds?.length) {
-          const linkedOrders = this.transactions.filter(t =>
-            transaction.linkedOrderIds!.includes(t.id)
-          );
-          if (linkedOrders.length > 0) {
-            linkedOrderDetails = linkedOrders.map(o => o.description);
-          }
-        }
-
-        // Call AI service to suggest category
-        const suggestedCategory = await this.aiService.suggestCategory(
-          transaction.description,
-          linkedOrderDetails
-        );
-
-        if (suggestedCategory) {
-          transaction.category = suggestedCategory;
-          await this.transactionService.updateTransaction(transaction);
-          successCount++;
-        }
-      } catch (error) {
-        console.error('Error categorizing transaction:', error);
-        errorCount++;
-      }
-
-      this.categorizationProgress.current++;
-    }
-
-    this.isCategorizing = false;
-
-    if (errorCount > 0) {
       this.snackBar.open(
-        `Categorized ${successCount} transactions (${errorCount} errors)`,
-        '',
-        { duration: 3000 }
-      );
-    } else {
+        `Started categorization of ${transactionIds.length} transactions`,
+        'View Progress',
+        { duration: 5000 }
+      ).onAction().subscribe(() => {
+        this.openCategorizationDialog();
+      });
+
+      // Open the dialog automatically
+      this.openCategorizationDialog();
+
+    } catch (error: any) {
+      console.error('Error starting categorization:', error);
       this.snackBar.open(
-        `Successfully categorized ${successCount} transactions`,
+        error?.error?.error || 'Failed to start categorization',
         '',
         { duration: 3000 }
       );
     }
+  }
 
-    // Reload transactions to reflect changes
-    await this.transactionService.loadTransactions();
+  openCategorizationDialog() {
+    this.dialog.open(CategorizationDialogComponent, {
+      width: '800px',
+      maxHeight: '90vh',
+      disableClose: false
+    }).afterClosed().subscribe(() => {
+      // Reload transactions to reflect any changes
+      this.transactionService.loadTransactions();
+    });
   }
 
   // Maintenance methods

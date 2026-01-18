@@ -55,6 +55,12 @@ export interface Transaction {
 
   // Auto-detected payment platform based on description/beneficiary patterns
   detectedPlatform?: 'amazon' | 'paypal' | null;
+
+  // Categorization tracking (for AI categorization system)
+  subcategory?: string;                    // Optional subcategory for hierarchical organization
+  categoryConfidence?: number;             // AI confidence in category (0-100)
+  categorizedAt?: Date;                    // When the category was assigned
+  categorizedBy?: 'ai' | 'user' | 'rule'; // How the category was assigned
 }
 
 export interface Category {
@@ -63,4 +69,8 @@ export interface Category {
   description?: string;
   color?: string;
   keywords?: string[];
+
+  // Hierarchy support (for subcategories)
+  parentId?: string;        // ID of parent category (if this is a subcategory)
+  isSubcategory?: boolean;  // True if this is a subcategory
 }
