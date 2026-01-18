@@ -8,3 +8,4 @@ export * from './transaction-filter.service';
 export * from './transaction-selection.service';
 export * from './transaction-undo.service';
 export * from './matching.service';
+export * from './import.service';
