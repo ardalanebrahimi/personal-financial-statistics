@@ -32,7 +32,21 @@
       "Bash(git stash push:*)",
       "Bash(git stash pop:*)",
       "Bash(git push:*)",
-      "Bash(dir \"C:\\\\Users\\\\ardal\\\\source\\\\personal-financial-statistics\\\\src\\\\assets\")"
+      "Bash(dir \"C:\\\\Users\\\\ardal\\\\source\\\\personal-financial-statistics\\\\src\\\\assets\")",
+      "Bash(npx tsx:*)",
+      "Bash(node -e:*)",
+      "Bash(timeout 2 npx tsx:*)",
+      "Bash(timeout:*)",
+      "Bash(ping:*)",
+      "Bash(npx ts-node src/server/server.ts)",
+      "Bash(cmd //c \"taskkill /PID 12952 /F\")",
+      "Bash(dir /s /b \"C:\\\\Users\\\\ardal\\\\source\\\\personal-financial-statistics\\\\src\\\\app\\\\features\")",
+      "mcp__ide__getDiagnostics",
+      "Bash(git checkout:*)",
+      "Bash(done)",
+      "Bash(head:*)",
+      "Bash(cut:*)",
+      "Bash(tr:*)"
     ]
   }
 }

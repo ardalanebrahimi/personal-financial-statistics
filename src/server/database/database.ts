@@ -175,6 +175,24 @@ CREATE TABLE IF NOT EXISTS automation_config (
   value TEXT NOT NULL
 );
 
+-- Background jobs table
+CREATE TABLE IF NOT EXISTS jobs (
+  id TEXT PRIMARY KEY,
+  type TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('pending', 'running', 'completed', 'failed', 'cancelled')),
+  progress INTEGER DEFAULT 0,
+  total INTEGER DEFAULT 0,
+  processed INTEGER DEFAULT 0,
+  errors INTEGER DEFAULT 0,
+  error_details TEXT DEFAULT '[]', -- JSON array of error messages
+  result TEXT, -- JSON object with job-specific results
+  created_at TEXT NOT NULL,
+  started_at TEXT,
+  completed_at TEXT,
+  file_name TEXT,
+  file_path TEXT
+);
+
 -- Indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
 CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category);
@@ -183,6 +201,7 @@ CREATE INDEX IF NOT EXISTS idx_transactions_match ON transactions(match_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_context ON transactions(is_context_only);
 CREATE INDEX IF NOT EXISTS idx_matches_primary ON matches(primary_transaction_id);
 CREATE INDEX IF NOT EXISTS idx_rules_enabled ON rules(enabled, priority);
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 `;
 
 // Initialize schema
@@ -321,6 +340,18 @@ export function updateTransaction(tx: StoredTransaction): void {
 export function deleteTransaction(id: string): boolean {
   const result = db.prepare(`DELETE FROM transactions WHERE id = ?`).run(id);
   return result.changes > 0;
+}
+
+export function clearAllTransactions(keepContextOnly: boolean = true): number {
+  if (keepContextOnly) {
+    // Keep Amazon orders (isContextOnly = 1), delete only bank transactions
+    const result = db.prepare(`DELETE FROM transactions WHERE is_context_only = 0 OR is_context_only IS NULL`).run();
+    return result.changes;
+  } else {
+    // Delete everything
+    const result = db.prepare(`DELETE FROM transactions`).run();
+    return result.changes;
+  }
 }
 
 export function bulkUpdateTransactions(transactions: StoredTransaction[]): void {
@@ -871,6 +902,154 @@ export function migrateFromJson(): { migrated: boolean; stats: any } {
 
   console.log('[Database] Migration complete!', stats);
   return { migrated: true, stats };
+}
+
+// ==================== JOB OPERATIONS ====================
+
+export interface Job {
+  id: string;
+  type: 'csv_import' | 'amazon_import' | 'categorization' | 'order_matching';
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+  progress: number;
+  total: number;
+  processed: number;
+  errors: number;
+  errorDetails: string[];
+  result?: any;
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  fileName?: string;
+  filePath?: string;
+}
+
+export function createJob(job: Partial<Job> & { type: Job['type'] }): Job {
+  const newJob: Job = {
+    id: job.id || crypto.randomUUID(),
+    type: job.type,
+    status: 'pending',
+    progress: 0,
+    total: job.total || 0,
+    processed: 0,
+    errors: 0,
+    errorDetails: [],
+    createdAt: new Date().toISOString(),
+    fileName: job.fileName,
+    filePath: job.filePath
+  };
+
+  db.prepare(`
+    INSERT INTO jobs (id, type, status, progress, total, processed, errors, error_details, created_at, file_name, file_path)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    newJob.id,
+    newJob.type,
+    newJob.status,
+    newJob.progress,
+    newJob.total,
+    newJob.processed,
+    newJob.errors,
+    JSON.stringify(newJob.errorDetails),
+    newJob.createdAt,
+    newJob.fileName || null,
+    newJob.filePath || null
+  );
+
+  return newJob;
+}
+
+export function getJob(id: string): Job | null {
+  const row = db.prepare(`SELECT * FROM jobs WHERE id = ?`).get(id) as any;
+  if (!row) return null;
+  return rowToJob(row);
+}
+
+export function getActiveJobs(): Job[] {
+  const rows = db.prepare(`
+    SELECT * FROM jobs
+    WHERE status IN ('pending', 'running')
+    ORDER BY created_at DESC
+  `).all() as any[];
+  return rows.map(rowToJob);
+}
+
+export function getRecentJobs(limit: number = 10): Job[] {
+  const rows = db.prepare(`
+    SELECT * FROM jobs
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).all(limit) as any[];
+  return rows.map(rowToJob);
+}
+
+export function updateJobProgress(id: string, processed: number, total?: number): void {
+  const progress = total ? Math.round((processed / total) * 100) : 0;
+  if (total !== undefined) {
+    db.prepare(`
+      UPDATE jobs SET processed = ?, total = ?, progress = ?, status = 'running', started_at = COALESCE(started_at, ?)
+      WHERE id = ?
+    `).run(processed, total, progress, new Date().toISOString(), id);
+  } else {
+    db.prepare(`
+      UPDATE jobs SET processed = ?, progress = ?, status = 'running', started_at = COALESCE(started_at, ?)
+      WHERE id = ?
+    `).run(processed, progress, new Date().toISOString(), id);
+  }
+}
+
+export function addJobError(id: string, error: string): void {
+  const job = getJob(id);
+  if (!job) return;
+
+  const errorDetails = [...job.errorDetails, error].slice(-100); // Keep last 100 errors
+  db.prepare(`
+    UPDATE jobs SET errors = errors + 1, error_details = ?
+    WHERE id = ?
+  `).run(JSON.stringify(errorDetails), id);
+}
+
+export function completeJob(id: string, result?: any): void {
+  db.prepare(`
+    UPDATE jobs SET status = 'completed', progress = 100, completed_at = ?, result = ?
+    WHERE id = ?
+  `).run(new Date().toISOString(), result ? JSON.stringify(result) : null, id);
+}
+
+export function failJob(id: string, error: string): void {
+  const job = getJob(id);
+  if (!job) return;
+
+  const errorDetails = [...job.errorDetails, error];
+  db.prepare(`
+    UPDATE jobs SET status = 'failed', completed_at = ?, error_details = ?
+    WHERE id = ?
+  `).run(new Date().toISOString(), JSON.stringify(errorDetails), id);
+}
+
+export function cancelJob(id: string): void {
+  db.prepare(`
+    UPDATE jobs SET status = 'cancelled', completed_at = ?
+    WHERE id = ?
+  `).run(new Date().toISOString(), id);
+}
+
+function rowToJob(row: any): Job {
+  return {
+    id: row.id,
+    type: row.type,
+    status: row.status,
+    progress: row.progress,
+    total: row.total,
+    processed: row.processed,
+    errors: row.errors,
+    errorDetails: JSON.parse(row.error_details || '[]'),
+    result: row.result ? JSON.parse(row.result) : undefined,
+    createdAt: row.created_at,
+    startedAt: row.started_at,
+    completedAt: row.completed_at,
+    fileName: row.file_name,
+    filePath: row.file_path
+  };
 }
 
 // ==================== DATABASE UTILITIES ====================

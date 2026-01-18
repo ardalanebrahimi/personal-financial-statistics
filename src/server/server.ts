@@ -1,10 +1,13 @@
 // Load environment variables from .env file
 import * as dotenv from 'dotenv';
 import * as path from 'path';
+import * as fs from 'fs';
 dotenv.config({ path: path.join(__dirname, '.env') });
 
 // @ts-ignore
 const express = require('express');
+// @ts-ignore
+const multer = require('multer');
 import cors from 'cors';
 import { Request, Response } from 'express';
 import { connectorManager } from './connectors/connector-manager';
@@ -21,6 +24,16 @@ import { AutomationService, getAutomationService, AutomationConfig } from './aut
 // Database imports
 import * as db from './database/database';
 import { encryptCredentials, decryptCredentials } from './utils/encryption';
+
+// Job processing imports
+import { processCsvImport, cancelImportJob } from './jobs/csv-import-processor';
+
+// Configure multer for file uploads
+const uploadDir = path.join(__dirname, '../data/uploads');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+const upload = multer({ dest: uploadDir });
 
 const app = express();
 
@@ -158,15 +171,226 @@ app.get('/categories', async (req: Request, res: Response) => {
   }
 });
 
+// POST /categories/cleanup - Remove meaningless categories and reset affected transactions
+app.post('/categories/cleanup', async (req: Request, res: Response) => {
+  try {
+    const forbiddenCategories = [
+      'online shopping', 'new category', 'uncategorized', 'other',
+      'misc', 'miscellaneous', 'general', 'shopping'
+    ];
+
+    // Get all categories and filter out forbidden ones
+    const allCategories = db.getAllCategories();
+    const categoriesToRemove = allCategories.filter(c =>
+      forbiddenCategories.includes(c.name.toLowerCase())
+    );
+    const categoriesToKeep = allCategories.filter(c =>
+      !forbiddenCategories.includes(c.name.toLowerCase())
+    );
+
+    // Get transactions with forbidden categories and reset them
+    const transactions = await getStoredTransactions();
+    let resetCount = 0;
+
+    for (const tx of transactions) {
+      if (tx.category && forbiddenCategories.includes(tx.category.toLowerCase())) {
+        (tx as any).category = undefined;
+        db.updateTransaction(tx);
+        resetCount++;
+      }
+    }
+
+    // Save the cleaned categories
+    db.saveCategories(categoriesToKeep);
+
+    res.json({
+      success: true,
+      categoriesRemoved: categoriesToRemove.map(c => c.name),
+      transactionsReset: resetCount,
+      remainingCategories: categoriesToKeep.length
+    });
+  } catch (error) {
+    console.error('Cleanup error:', error);
+    res.status(500).json({ error: 'Failed to cleanup categories' });
+  }
+});
+
 app.get('/transactions/category/:description', async (req: Request, res: Response) => {
   try {
     const transactions = await getStoredTransactions();
-    const match = transactions.find(t => 
+    const match = transactions.find(t =>
       t.description.toLowerCase() === req.params['description'].toLowerCase()
     );
     res.json({ category: match?.category || null });
   } catch (error) {
     res.status(500).json({ error: 'Failed to check transaction category' });
+  }
+});
+
+// POST /transactions/find-duplicates - Find potential duplicate transactions
+app.post('/transactions/find-duplicates', async (req: Request, res: Response) => {
+  try {
+    const transactions = await getStoredTransactions();
+
+    // Helper to extract Amazon order number from description
+    const extractAmazonOrderNumber = (desc: string): string | null => {
+      // Match patterns like "306-3583117-4868346" or "-3583117-4868346" or "3583117-4868346"
+      const match = desc.match(/\d{7}-\d{7}/);
+      return match ? match[0] : null;
+    };
+
+    // Group transactions by potential duplicate keys
+    const groups = new Map<string, typeof transactions>();
+
+    for (const tx of transactions) {
+      // Skip context-only (Amazon orders) - they're not duplicates of bank transactions
+      if (tx.isContextOnly) continue;
+
+      const dateStr = new Date(tx.date).toISOString().split('T')[0];
+      // IMPORTANT: Don't use Math.abs() - a purchase (-9.99) and refund (+9.99) are NOT duplicates!
+      const amountKey = tx.amount.toFixed(2);
+
+      // For Amazon transactions, use order number as additional key
+      const orderNum = extractAmazonOrderNumber(tx.description);
+
+      // Key components: date + amount + (order number OR beneficiary OR normalized description)
+      // Date is REQUIRED for duplicate matching
+      let key: string;
+      if (orderNum) {
+        // Amazon: date + order number + amount
+        key = `amazon:${dateStr}:${orderNum}:${amountKey}`;
+      } else if (tx.beneficiary) {
+        // Non-Amazon with beneficiary: date + amount + normalized beneficiary
+        // This catches duplicate rent payments, subscriptions, etc.
+        const benefKey = tx.beneficiary.toLowerCase().replace(/[^a-z0-9]/g, '').substring(0, 30);
+        key = `benef:${dateStr}:${amountKey}:${benefKey}`;
+      } else {
+        // Non-Amazon without beneficiary: date + amount + normalized description (first 30 chars)
+        const descKey = tx.description.toLowerCase().replace(/[^a-z0-9]/g, '').substring(0, 30);
+        key = `generic:${dateStr}:${amountKey}:${descKey}`;
+      }
+
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(tx);
+    }
+
+    // Find groups with more than one transaction (duplicates)
+    const duplicateGroups: { key: string; transactions: any[] }[] = [];
+    for (const [key, txs] of groups) {
+      if (txs.length > 1) {
+        duplicateGroups.push({
+          key,
+          transactions: txs.map(t => ({
+            id: t.id,
+            date: t.date,
+            description: t.description,
+            amount: t.amount,
+            beneficiary: t.beneficiary,
+            source: t.source?.connectorType,
+            category: t.category,
+            linkedOrderIds: t.linkedOrderIds
+          }))
+        });
+      }
+    }
+
+    res.json({
+      totalGroups: duplicateGroups.length,
+      totalDuplicates: duplicateGroups.reduce((sum, g) => sum + g.transactions.length - 1, 0),
+      groups: duplicateGroups
+    });
+  } catch (error) {
+    console.error('Find duplicates error:', error);
+    res.status(500).json({ error: 'Failed to find duplicates' });
+  }
+});
+
+// POST /transactions/remove-duplicate - Remove a specific duplicate transaction by ID
+app.post('/transactions/remove-duplicate/:id', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    db.deleteTransaction(id);
+    res.json({ success: true, removedId: id });
+  } catch (error) {
+    console.error('Remove duplicate error:', error);
+    res.status(500).json({ error: 'Failed to remove duplicate' });
+  }
+});
+
+// POST /transactions/remove-duplicates-auto - Auto-remove duplicates (keeps the one with most info)
+app.post('/transactions/remove-duplicates-auto', async (req: Request, res: Response) => {
+  try {
+    const transactions = await getStoredTransactions();
+
+    // Helper to extract Amazon order number from description
+    const extractAmazonOrderNumber = (desc: string): string | null => {
+      const match = desc.match(/\d{7}-\d{7}/);
+      return match ? match[0] : null;
+    };
+
+    // Score a transaction - higher is better to keep
+    const scoreTx = (tx: any): number => {
+      let score = 0;
+      if (tx.category) score += 10;
+      if (tx.beneficiary) score += 5;
+      if (tx.linkedOrderIds?.length) score += 8;
+      if (tx.source?.externalId) score += 3;
+      // Prefer longer descriptions (more info)
+      score += Math.min(tx.description.length / 20, 5);
+      return score;
+    };
+
+    // Group transactions by potential duplicate keys (same logic as find-duplicates)
+    const groups = new Map<string, typeof transactions>();
+
+    for (const tx of transactions) {
+      if (tx.isContextOnly) continue;
+
+      const dateStr = new Date(tx.date).toISOString().split('T')[0];
+      const amountKey = tx.amount.toFixed(2);
+      const orderNum = extractAmazonOrderNumber(tx.description);
+
+      let key: string;
+      if (orderNum) {
+        key = `amazon:${dateStr}:${orderNum}:${amountKey}`;
+      } else if (tx.beneficiary) {
+        const benefKey = tx.beneficiary.toLowerCase().replace(/[^a-z0-9]/g, '').substring(0, 30);
+        key = `benef:${dateStr}:${amountKey}:${benefKey}`;
+      } else {
+        const descKey = tx.description.toLowerCase().replace(/[^a-z0-9]/g, '').substring(0, 30);
+        key = `generic:${dateStr}:${amountKey}:${descKey}`;
+      }
+
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(tx);
+    }
+
+    // Remove duplicates (keep highest scored)
+    let removedCount = 0;
+    const removedIds: string[] = [];
+
+    for (const [key, txs] of groups) {
+      if (txs.length > 1) {
+        // Sort by score descending, keep first
+        txs.sort((a, b) => scoreTx(b) - scoreTx(a));
+
+        // Keep the first (best), delete the rest
+        for (let i = 1; i < txs.length; i++) {
+          db.deleteTransaction(txs[i].id);
+          removedIds.push(txs[i].id);
+          removedCount++;
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      removedCount,
+      removedIds
+    });
+  } catch (error) {
+    console.error('Remove duplicates error:', error);
+    res.status(500).json({ error: 'Failed to remove duplicates' });
   }
 });
 
@@ -318,12 +542,24 @@ app.get('/transactions/filter', async (req: Request, res: Response) => {
   }
 });
 
+// DELETE /transactions/all - Clear all transactions
+app.delete('/transactions/all', async (req: Request, res: Response) => {
+  try {
+    const deletedCount = db.clearAllTransactions();
+    console.log(`[Server] Cleared ${deletedCount} transactions`);
+    res.json({ success: true, deletedCount });
+  } catch (error) {
+    console.error('Clear all transactions error:', error);
+    res.status(500).json({ error: 'Failed to clear transactions' });
+  }
+});
+
 app.delete('/transactions/:id', async (req: Request, res: Response) => {
   try {
     const transactions = await getStoredTransactions();
     const filtered = transactions.filter(t => t.id !== req.params['id']);
     await bulkSaveTransactions(filtered);
-    res.sendStatus(200);
+    res.json({ success: true, deletedId: req.params['id'] });
   } catch (error) {
     res.status(500).json({ error: 'Failed to delete transaction' });
   }
@@ -370,12 +606,112 @@ app.put('/transactions/:id', async (req: Request, res: Response) => {
     if (index !== -1) {
       transactions[index] = { ...req.body, timestamp: new Date().toISOString() };
       await bulkSaveTransactions(transactions);
-      res.sendStatus(200);
+      res.json({ success: true, updatedId: req.params['id'] });
     } else {
       res.status(404).json({ error: 'Transaction not found' });
     }
   } catch (error) {
     res.status(500).json({ error: 'Failed to update transaction' });
+  }
+});
+
+// ==================== JOB ENDPOINTS ====================
+
+// POST /jobs/import/csv - Upload and start CSV import job
+app.post('/jobs/import/csv', upload.single('file'), async (req: Request, res: Response) => {
+  try {
+    const file = (req as any).file;
+    if (!file) {
+      res.status(400).json({ error: 'No file uploaded' });
+      return;
+    }
+
+    // Create the job
+    const job = db.createJob({
+      type: 'csv_import',
+      fileName: file.originalname,
+      filePath: file.path
+    });
+
+    console.log(`[Jobs] Created CSV import job ${job.id} for file ${file.originalname}`);
+
+    // Start processing in background (don't await)
+    processCsvImport(job.id, file.path).catch(err => {
+      console.error(`[Jobs] CSV import job ${job.id} failed:`, err);
+    });
+
+    // Return immediately with job ID
+    res.json({
+      success: true,
+      jobId: job.id,
+      message: 'Import job started'
+    });
+  } catch (error: any) {
+    console.error('Failed to start import job:', error);
+    res.status(500).json({ error: 'Failed to start import job', details: error.message });
+  }
+});
+
+// GET /jobs - Get all recent jobs
+app.get('/jobs', (req: Request, res: Response) => {
+  try {
+    const limit = parseInt(req.query['limit'] as string) || 20;
+    const jobs = db.getRecentJobs(limit);
+    res.json({ jobs });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get jobs' });
+  }
+});
+
+// GET /jobs/active - Get active (running/pending) jobs
+app.get('/jobs/active', (req: Request, res: Response) => {
+  try {
+    const jobs = db.getActiveJobs();
+    res.json({ jobs });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get active jobs' });
+  }
+});
+
+// GET /jobs/:id - Get specific job status
+app.get('/jobs/:id', (req: Request, res: Response) => {
+  try {
+    const job = db.getJob(req.params['id']);
+    if (!job) {
+      res.status(404).json({ error: 'Job not found' });
+      return;
+    }
+    res.json({ job });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get job' });
+  }
+});
+
+// POST /jobs/:id/cancel - Cancel a running job
+app.post('/jobs/:id/cancel', (req: Request, res: Response) => {
+  try {
+    const job = db.getJob(req.params['id']);
+    if (!job) {
+      res.status(404).json({ error: 'Job not found' });
+      return;
+    }
+
+    if (job.status !== 'running' && job.status !== 'pending') {
+      res.status(400).json({ error: 'Job is not running' });
+      return;
+    }
+
+    // Try to cancel the import
+    const cancelled = cancelImportJob(job.id);
+    if (cancelled) {
+      res.json({ success: true, message: 'Job cancellation requested' });
+    } else {
+      // Job might have just completed
+      db.cancelJob(job.id);
+      res.json({ success: true, message: 'Job cancelled' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to cancel job' });
   }
 });
 
@@ -2054,7 +2390,7 @@ app.post('/rules/consolidate', async (req: Request, res: Response) => {
 // POST /ai/chat - Chat with AI assistant
 app.post('/ai/chat', async (req: Request, res: Response) => {
   try {
-    const { message, includeContext = true } = req.body;
+    const { message, includeContext = true, attachedTransactionIds } = req.body;
 
     if (!message) {
       return res.status(400).json({ error: 'Message is required' });
@@ -2076,13 +2412,78 @@ app.post('/ai/chat', async (req: Request, res: Response) => {
           category: t.category,
           beneficiary: t.beneficiary,
           source: t.source,
-          matchInfo: t.matchInfo
+          matchInfo: t.matchInfo,
+          // Include order linking fields so AI can use linked order details
+          isContextOnly: t.isContextOnly,
+          linkedOrderIds: t.linkedOrderIds
         })),
         categories
       });
     }
 
-    const response = await assistant.query(message);
+    // Enhance message with linked order details if attached transactions have linked orders
+    let enhancedMessage = message;
+    if (attachedTransactionIds && attachedTransactionIds.length > 0) {
+      const transactions = await getStoredTransactions();
+      const linkedOrderDetails: string[] = [];
+
+      for (const txId of attachedTransactionIds) {
+        const tx = transactions.find(t => t.id === txId);
+        if (tx && tx.linkedOrderIds && tx.linkedOrderIds.length > 0) {
+          // Find the linked orders (context-only transactions)
+          const linkedOrders = transactions.filter(t =>
+            tx.linkedOrderIds!.includes(t.id)
+          );
+          if (linkedOrders.length > 0) {
+            const orderDescriptions = linkedOrders.map(o =>
+              `  - ${o.description} (€${o.amount.toFixed(2)})`
+            ).join('\n');
+            linkedOrderDetails.push(
+              `\nLinked order details for "${tx.description}":\n${orderDescriptions}`
+            );
+          }
+        }
+      }
+
+      if (linkedOrderDetails.length > 0) {
+        enhancedMessage = message + '\n\n' + linkedOrderDetails.join('\n');
+      }
+    }
+
+    // Detect if this is a category suggestion request
+    const isCategoryRequest = /categor|suggest|what.*is|classify/i.test(message);
+
+    // If category request with single attached transaction, instruct AI to respond with structured category
+    let finalMessage = enhancedMessage;
+    if (isCategoryRequest && attachedTransactionIds?.length === 1) {
+      finalMessage = enhancedMessage + '\n\nIMPORTANT: End your response with the suggested category on its own line in this exact format: [CATEGORY: CategoryName]';
+    }
+
+    const response = await assistant.query(finalMessage);
+
+    // Extract category from AI response if present
+    if (isCategoryRequest && attachedTransactionIds?.length === 1 && response.message) {
+      const categoryMatch = response.message.match(/\[CATEGORY:\s*([^\]]+)\]/i);
+      if (categoryMatch) {
+        const suggestedCategory = categoryMatch[1].trim();
+        const categories = await getCategories();
+
+        // Check if category exists (case-insensitive match)
+        const existingCategory = categories.find(
+          c => c.name.toLowerCase() === suggestedCategory.toLowerCase()
+        );
+
+        response.categoryAction = {
+          transactionId: attachedTransactionIds[0],
+          suggestedCategory: existingCategory ? existingCategory.name : suggestedCategory,
+          confidence: existingCategory ? 'high' : 'medium'
+        };
+
+        // Clean up the response message (remove the [CATEGORY: ...] tag)
+        response.message = response.message.replace(/\s*\[CATEGORY:\s*[^\]]+\]/i, '').trim();
+      }
+    }
+
     return res.json(response);
   } catch (error) {
     console.error('Error in AI chat:', error);

@@ -7,6 +7,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatChipsModule } from '@angular/material/chips';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatMenuModule } from '@angular/material/menu';
+import { MatCheckboxModule } from '@angular/material/checkbox';
 import { Transaction, Category } from '../../core/models/transaction.model';
 
 @Component({
@@ -20,7 +21,8 @@ import { Transaction, Category } from '../../core/models/transaction.model';
     MatButtonModule,
     MatChipsModule,
     MatTooltipModule,
-    MatMenuModule
+    MatMenuModule,
+    MatCheckboxModule
   ],
   template: `
     <div class="transaction-card"
@@ -34,12 +36,20 @@ import { Transaction, Category } from '../../core/models/transaction.model';
          [class.context-only]="transaction.isContextOnly"
          [class.has-linked-orders]="transaction.linkedOrderIds?.length"
          (click)="onCardClick($event)"
-         (dblclick)="toggleExpand()"
+         (dblclick)="onDoubleClick($event)"
          [attr.tabindex]="0"
          (keydown)="onKeyDown($event)">
 
       <!-- Compact View -->
       <div class="card-main">
+        <!-- Checkbox for selection -->
+        <mat-checkbox
+          class="selection-checkbox"
+          [checked]="selected"
+          (change)="onCheckboxChange($event)"
+          (click)="$event.stopPropagation()">
+        </mat-checkbox>
+
         <div class="card-left">
           <div class="source-indicator" *ngIf="transaction.source">
             <mat-icon [matTooltip]="transaction.source.connectorType">account_balance</mat-icon>
@@ -102,6 +112,12 @@ import { Transaction, Category } from '../../core/models/transaction.model';
 
         <div class="card-actions">
           <button mat-icon-button
+                  matTooltip="Ask AI"
+                  (click)="onAskAI($event)"
+                  class="ask-ai-button">
+            <mat-icon>smart_toy</mat-icon>
+          </button>
+          <button mat-icon-button
                   [matMenuTriggerFor]="actionMenu"
                   (click)="$event.stopPropagation()">
             <mat-icon>more_vert</mat-icon>
@@ -114,6 +130,10 @@ import { Transaction, Category } from '../../core/models/transaction.model';
             <button mat-menu-item (click)="onEdit()">
               <mat-icon>edit</mat-icon>
               <span>Edit</span>
+            </button>
+            <button mat-menu-item (click)="onAskAI($event)">
+              <mat-icon>smart_toy</mat-icon>
+              <span>Ask AI</span>
             </button>
             <button mat-menu-item (click)="onMerge()">
               <mat-icon>merge</mat-icon>
@@ -256,7 +276,11 @@ import { Transaction, Category } from '../../core/models/transaction.model';
     .card-main {
       display: flex;
       align-items: center;
-      gap: 16px;
+      gap: 12px;
+    }
+
+    .selection-checkbox {
+      flex-shrink: 0;
     }
 
     .card-left {
@@ -363,6 +387,8 @@ import { Transaction, Category } from '../../core/models/transaction.model';
     }
 
     .card-actions {
+      display: flex;
+      gap: 4px;
       opacity: 0;
       transition: opacity 0.2s;
     }
@@ -370,6 +396,14 @@ import { Transaction, Category } from '../../core/models/transaction.model';
     .transaction-card:hover .card-actions,
     .transaction-card:focus .card-actions {
       opacity: 1;
+    }
+
+    .ask-ai-button {
+      color: #1976d2;
+    }
+
+    .ask-ai-button:hover {
+      background-color: rgba(25, 118, 210, 0.1);
     }
 
     .context-indicator {
@@ -585,12 +619,15 @@ export class TransactionCardComponent {
   @Input() compact = false;
 
   @Output() selectTransaction = new EventEmitter<Transaction>();
+  @Output() toggleSelect = new EventEmitter<{ transaction: Transaction; selected: boolean }>();
   @Output() editTransaction = new EventEmitter<Transaction>();
   @Output() deleteTransaction = new EventEmitter<Transaction>();
   @Output() mergeTransaction = new EventEmitter<Transaction>();
   @Output() splitTransaction = new EventEmitter<Transaction>();
   @Output() expandChange = new EventEmitter<boolean>();
   @Output() updateTransaction = new EventEmitter<Transaction>();
+  @Output() askAI = new EventEmitter<Transaction>();
+  @Output() openDetail = new EventEmitter<Transaction>();
 
   @ViewChild('descriptionInput') descriptionInput?: ElementRef<HTMLInputElement>;
   @ViewChild('amountInput') amountInput?: ElementRef<HTMLInputElement>;
@@ -605,6 +642,21 @@ export class TransactionCardComponent {
     if (!this.isEditing) {
       this.selectTransaction.emit(this.transaction);
     }
+  }
+
+  onDoubleClick(event: Event) {
+    event.preventDefault();
+    event.stopPropagation();
+    this.openDetail.emit(this.transaction);
+  }
+
+  onCheckboxChange(event: any) {
+    this.toggleSelect.emit({ transaction: this.transaction, selected: event.checked });
+  }
+
+  onAskAI(event: Event) {
+    event.stopPropagation();
+    this.askAI.emit(this.transaction);
   }
 
   toggleExpand() {

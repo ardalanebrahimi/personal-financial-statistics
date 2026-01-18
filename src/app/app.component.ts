@@ -7,6 +7,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { AiFabComponent } from './shared/ai-fab/ai-fab.component';
+import { JobStatusIndicatorComponent } from './shared/job-status-indicator.component';
 
 @Component({
   selector: 'app-root',
@@ -43,6 +44,8 @@ import { AiFabComponent } from './shared/ai-fab/ai-fab.component';
       <mat-sidenav-content [style.margin-left]="sidenavExpanded ? '250px' : '64px'">
         <mat-toolbar color="primary">
           <span>Personal Financial Statistics</span>
+          <span class="toolbar-spacer"></span>
+          <app-job-status-indicator></app-job-status-indicator>
         </mat-toolbar>
         <main>
           <router-outlet></router-outlet>
@@ -134,6 +137,9 @@ import { AiFabComponent } from './shared/ai-fab/ai-fab.component';
       top: 0;
       z-index: 100;
     }
+    .toolbar-spacer {
+      flex: 1 1 auto;
+    }
     main {
       padding: 1rem;
     }
@@ -146,7 +152,8 @@ import { AiFabComponent } from './shared/ai-fab/ai-fab.component';
     MatButtonModule,
     MatIconModule,
     MatTooltipModule,
-    AiFabComponent
+    AiFabComponent,
+    JobStatusIndicatorComponent
   ],
   standalone: true
 })

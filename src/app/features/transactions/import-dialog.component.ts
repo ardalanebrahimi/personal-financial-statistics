@@ -14,6 +14,7 @@ import { MatInputModule } from '@angular/material/input';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { TransactionService } from '../../services/transaction.service';
+import { JobService } from '../../services/job.service';
 import { Category } from '../../core/models/transaction.model';
 import { environment } from '../../../environments/environment';
 
@@ -489,6 +490,7 @@ export class ImportDialogComponent implements OnInit {
     public dialogRef: MatDialogRef<ImportDialogComponent, ImportDialogResult>,
     @Inject(MAT_DIALOG_DATA) public data: ImportDialogData,
     private transactionService: TransactionService,
+    private jobService: JobService,
     private http: HttpClient,
     private snackBar: MatSnackBar
   ) {}
@@ -601,20 +603,30 @@ export class ImportDialogComponent implements OnInit {
     this.csvResult = null;
 
     try {
-      const importedTransactions = await this.transactionService.parseFile(this.csvFile);
-      const count = importedTransactions?.length || 0;
+      // Upload file to backend and start background job
+      const { jobId } = await this.jobService.uploadCsv(this.csvFile);
 
       this.csvResult = {
         success: true,
-        message: 'Import complete',
-        count
+        message: 'Import job started! Processing continues in background.',
+        count: 0
       };
 
-      this.close({ imported: true, count });
+      this.snackBar.open(
+        'Import started! You can close this dialog - processing continues in background.',
+        'OK',
+        { duration: 5000 }
+      );
+
+      // Close dialog after short delay
+      setTimeout(() => {
+        this.close({ imported: true, count: 0 });
+      }, 1500);
+
     } catch (error: any) {
       this.csvResult = {
         success: false,
-        message: error.message || 'Import failed'
+        message: error.message || 'Failed to start import'
       };
     }
 

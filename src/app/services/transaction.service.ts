@@ -72,27 +72,42 @@ export class TransactionService {
   async parseFile(file: File): Promise<Transaction[]> {
     const text = await file.text();
     const rows = text.split('\n').map(row => row.split(';').map(cell => cell.trim().replace(/"/g, '')));
-    
+
+    // Detect file format based on header
+    const header = rows[0];
+    const isNewFormat = header.length <= 12; // File (2) has 12 columns
+
     for (const row of rows.slice(1)) {
-        if (row.length < 15) continue;
-        
-        const description = this.extractDescription(row[3], row[4], row[11]);
-        const amount = this.parseAmount(row[14]);
+        // Skip rows that don't have enough columns
+        const minColumns = isNewFormat ? 9 : 15;
+        if (row.length < minColumns) continue;
+
+        // Column mapping differs between formats:
+        // New format (12 cols): [1]=date, [3]=posting, [4]=purpose, [5]=beneficiary, [8]=amount, [11]=category
+        // Old format (17 cols): [1]=date, [3]=posting, [4]=purpose, [11]=beneficiary, [14]=amount
+        const beneficiaryIdx = isNewFormat ? 5 : 11;
+        const amountIdx = isNewFormat ? 8 : 14;
+        const categoryIdx = isNewFormat ? 11 : -1; // Only new format has category column
+
+        const description = this.extractDescription(row[3], row[4], row[beneficiaryIdx]);
+        const amount = this.parseAmount(row[amountIdx]);
         const date = this.parseGermanDate(row[1]);
-        const beneficiary = row[11]; // Extract Beneficiary/payer from the row
-        
+        const beneficiary = row[beneficiaryIdx];
+
+        // Get bank-provided category if available (new format only)
+        const bankCategory = categoryIdx >= 0 && row[categoryIdx] ? row[categoryIdx] : '';
+
         if (!description || !amount || !date) continue;
 
         // Check if transaction already exists
         const match = await this.checkExistingTransaction(date, amount, description);
-        
+
         if (match.exists) {
             console.log('Transaction already exists, skipping...', { date, amount, description });
-            this.updateTransaction
             continue;
         }
 
-        // Save transaction without category - categorization is done separately on demand
+        // Save transaction - use bank category if provided, otherwise empty
         await firstValueFrom(
             this.http.post(this.API_URL, {
                 id: crypto.randomUUID(),
@@ -100,11 +115,11 @@ export class TransactionService {
                 description,
                 amount,
                 beneficiary,
-                category: ''
+                category: bankCategory
             }, { responseType: 'text' })
         );
     }
-    
+
     await this.loadTransactions();
     return this.transactions.value;
   }

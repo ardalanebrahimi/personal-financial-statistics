@@ -17,18 +17,22 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatPaginatorModule, PageEvent } from '@angular/material/paginator';
 import { MatMenuModule } from '@angular/material/menu';
 import { MatDividerModule } from '@angular/material/divider';
+import { MatProgressBarModule } from '@angular/material/progress-bar';
+import { MatCheckboxModule } from '@angular/material/checkbox';
 import { DragDropModule, CdkDragDrop, CdkDrag, CdkDropList, moveItemInArray, transferArrayItem } from '@angular/cdk/drag-drop';
 import { Subscription } from 'rxjs';
 
 import { TransactionService } from '../../services/transaction.service';
 import { CategoryService } from '../../services/category.service';
 import { AIContextService } from '../../services/ai-context.service';
+import { AIService } from '../../services/ai.service';
 import { Transaction, Category } from '../../core/models/transaction.model';
 import { TransactionCardComponent } from './transaction-card.component';
 import { MergeDialogComponent } from './merge-dialog.component';
 import { SplitDialogComponent } from './split-dialog.component';
 import { TransactionDetailDialogComponent, TransactionDetailDialogResult } from './transaction-detail-dialog.component';
 import { ImportDialogComponent, ImportDialogResult } from './import-dialog.component';
+import { DuplicatesDialogComponent, DuplicatesDialogResult } from './duplicates-dialog.component';
 
 interface UndoAction {
   type: 'category' | 'merge' | 'split' | 'delete' | 'edit';
@@ -58,6 +62,8 @@ interface UndoAction {
     MatPaginatorModule,
     MatMenuModule,
     MatDividerModule,
+    MatProgressBarModule,
+    MatCheckboxModule,
     DragDropModule,
     TransactionCardComponent
   ],
@@ -107,10 +113,46 @@ interface UndoAction {
             <mat-icon>link</mat-icon>
             Run Matching
           </button>
+          <button mat-raised-button color="accent" [matMenuTriggerFor]="categorizeMenu" [disabled]="isCategorizing">
+            <mat-icon>auto_fix_high</mat-icon>
+            Categorize
+          </button>
+          <mat-menu #categorizeMenu>
+            <button mat-menu-item (click)="categorizeSelected()" [disabled]="selectedTransactions.length === 0">
+              <mat-icon>check_box</mat-icon>
+              <span>Selected ({{ selectedTransactions.length }})</span>
+            </button>
+            <button mat-menu-item (click)="categorizeUncategorized()">
+              <mat-icon>help_outline</mat-icon>
+              <span>All Uncategorized ({{ uncategorizedCount }})</span>
+            </button>
+            <button mat-menu-item (click)="categorizeFiltered()">
+              <mat-icon>filter_list</mat-icon>
+              <span>All Filtered ({{ filteredTransactions.length }})</span>
+            </button>
+          </mat-menu>
           <button mat-button (click)="exportCSV()">
             <mat-icon>download</mat-icon>
             Export
           </button>
+          <button mat-button [matMenuTriggerFor]="maintenanceMenu">
+            <mat-icon>build</mat-icon>
+            Maintenance
+          </button>
+          <mat-menu #maintenanceMenu>
+            <button mat-menu-item (click)="cleanupCategories()">
+              <mat-icon>cleaning_services</mat-icon>
+              <span>Remove Generic Categories</span>
+            </button>
+            <button mat-menu-item (click)="findDuplicates()">
+              <mat-icon>content_copy</mat-icon>
+              <span>Find Duplicates</span>
+            </button>
+            <button mat-menu-item (click)="removeDuplicates()">
+              <mat-icon>delete_sweep</mat-icon>
+              <span>Remove Duplicates</span>
+            </button>
+          </mat-menu>
         </div>
       </div>
 
@@ -229,6 +271,25 @@ interface UndoAction {
         </div>
       </div>
 
+      <!-- Selection Bar -->
+      <div class="selection-bar">
+        <mat-checkbox
+          [checked]="allVisibleSelected"
+          [indeterminate]="someVisibleSelected && !allVisibleSelected"
+          (change)="toggleSelectAll($event.checked)"
+          matTooltip="Select all visible">
+          Select All
+        </mat-checkbox>
+        <span class="selection-info" *ngIf="selectedTransactions.length > 0">
+          {{ selectedTransactions.length }} selected
+          <button mat-button (click)="clearSelection()">Clear</button>
+        </span>
+        <div class="categorization-progress" *ngIf="isCategorizing">
+          <span>Categorizing {{ categorizationProgress.current }} / {{ categorizationProgress.total }}</span>
+          <mat-progress-bar mode="determinate" [value]="(categorizationProgress.current / categorizationProgress.total) * 100"></mat-progress-bar>
+        </div>
+      </div>
+
       <!-- Summary Bar -->
       <div class="summary-bar">
         <div class="summary-item">
@@ -284,12 +345,15 @@ interface UndoAction {
                 [expanded]="expandedIds.has(transaction.id)"
                 [compact]="viewMode === 'compact'"
                 (selectTransaction)="onSelectTransaction($event, $event)"
+                (toggleSelect)="onToggleSelect($event)"
                 (editTransaction)="onEditTransaction($event)"
                 (deleteTransaction)="onDeleteTransaction($event)"
                 (mergeTransaction)="onMergeTransaction($event)"
                 (splitTransaction)="onSplitTransaction($event)"
                 (expandChange)="onExpandChange(transaction, $event)"
-                (updateTransaction)="onUpdateTransaction($event)">
+                (updateTransaction)="onUpdateTransaction($event)"
+                (askAI)="onAskAI($event)"
+                (openDetail)="onEditTransaction($event)">
               </app-transaction-card>
 
               <!-- Drag Preview -->
@@ -470,6 +534,36 @@ interface UndoAction {
     .quick-dates button.active {
       background-color: #1976d2;
       color: white;
+    }
+
+    .selection-bar {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 8px 24px;
+      background: #e3f2fd;
+      border-bottom: 1px solid #bbdefb;
+    }
+
+    .selection-info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      color: #1976d2;
+    }
+
+    .categorization-progress {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-left: auto;
+      font-size: 13px;
+      color: #666;
+    }
+
+    .categorization-progress mat-progress-bar {
+      width: 200px;
     }
 
     .summary-bar {
@@ -725,6 +819,8 @@ export class TransactionsComponent implements OnInit, OnDestroy {
   showKeyboardHelp = false;
   isLoading = true;
   isMatching = false;
+  isCategorizing = false;
+  categorizationProgress = { current: 0, total: 0 };
 
   filters = {
     search: '',
@@ -760,6 +856,7 @@ export class TransactionsComponent implements OnInit, OnDestroy {
     private transactionService: TransactionService,
     private categoryService: CategoryService,
     private aiContextService: AIContextService,
+    private aiService: AIService,
     private snackBar: MatSnackBar,
     private dialog: MatDialog
   ) {}
@@ -1071,7 +1168,8 @@ export class TransactionsComponent implements OnInit, OnDestroy {
     }
 
     const dialogRef = this.dialog.open(TransactionDetailDialogComponent, {
-      width: '600px',
+      width: '800px',
+      maxWidth: '95vw',
       maxHeight: '90vh',
       data: {
         transaction: transaction,
@@ -1258,6 +1356,19 @@ export class TransactionsComponent implements OnInit, OnDestroy {
     return this.selectedTransactions.reduce((sum, t) => sum + t.amount, 0);
   }
 
+  get uncategorizedCount(): number {
+    return this.filteredTransactions.filter(t => !t.category && !t.isContextOnly).length;
+  }
+
+  get allVisibleSelected(): boolean {
+    return this.paginatedTransactions.length > 0 &&
+           this.paginatedTransactions.every(t => this.isSelected(t));
+  }
+
+  get someVisibleSelected(): boolean {
+    return this.paginatedTransactions.some(t => this.isSelected(t));
+  }
+
   get categoryStats(): { name: string; total: number }[] {
     const stats = new Map<string, number>();
     this.filteredTransactions.forEach(t => {
@@ -1365,5 +1476,226 @@ export class TransactionsComponent implements OnInit, OnDestroy {
       this.transactionService.updateTransaction(transaction);
     });
     this.snackBar.open(`Assigned "${category.name}" to ${this.selectedTransactions.length} transactions`, '', { duration: 2000 });
+  }
+
+  // Selection methods
+  onToggleSelect(event: { transaction: Transaction; selected: boolean }) {
+    if (event.selected) {
+      if (!this.isSelected(event.transaction)) {
+        this.selectedTransactions.push(event.transaction);
+      }
+    } else {
+      this.selectedTransactions = this.selectedTransactions.filter(t => t.id !== event.transaction.id);
+    }
+  }
+
+  toggleSelectAll(selected: boolean) {
+    if (selected) {
+      // Add all visible transactions to selection
+      this.paginatedTransactions.forEach(t => {
+        if (!this.isSelected(t)) {
+          this.selectedTransactions.push(t);
+        }
+      });
+    } else {
+      // Remove all visible transactions from selection
+      const visibleIds = new Set(this.paginatedTransactions.map(t => t.id));
+      this.selectedTransactions = this.selectedTransactions.filter(t => !visibleIds.has(t.id));
+    }
+  }
+
+  clearSelection() {
+    this.selectedTransactions = [];
+  }
+
+  // Ask AI
+  onAskAI(transaction: Transaction) {
+    this.aiContextService.askAboutTransaction(transaction);
+  }
+
+  // Categorization methods
+  async categorizeSelected() {
+    if (this.selectedTransactions.length === 0) return;
+    const uncategorized = this.selectedTransactions.filter(t => !t.category && !t.isContextOnly);
+    if (uncategorized.length === 0) {
+      this.snackBar.open('All selected transactions already have categories', '', { duration: 2000 });
+      return;
+    }
+    await this.categorizeTransactions(uncategorized);
+  }
+
+  async categorizeUncategorized() {
+    const uncategorized = this.filteredTransactions.filter(t => !t.category && !t.isContextOnly);
+    if (uncategorized.length === 0) {
+      this.snackBar.open('No uncategorized transactions found', '', { duration: 2000 });
+      return;
+    }
+    await this.categorizeTransactions(uncategorized);
+  }
+
+  async categorizeFiltered() {
+    const toCategorize = this.filteredTransactions.filter(t => !t.isContextOnly);
+    if (toCategorize.length === 0) {
+      this.snackBar.open('No transactions to categorize', '', { duration: 2000 });
+      return;
+    }
+    await this.categorizeTransactions(toCategorize);
+  }
+
+  private async categorizeTransactions(transactions: Transaction[]) {
+    this.isCategorizing = true;
+    this.categorizationProgress = { current: 0, total: transactions.length };
+
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (const transaction of transactions) {
+      try {
+        // Get linked order details if available
+        let linkedOrderDetails: string[] | undefined;
+        if (transaction.linkedOrderIds?.length) {
+          const linkedOrders = this.transactions.filter(t =>
+            transaction.linkedOrderIds!.includes(t.id)
+          );
+          if (linkedOrders.length > 0) {
+            linkedOrderDetails = linkedOrders.map(o => o.description);
+          }
+        }
+
+        // Call AI service to suggest category
+        const suggestedCategory = await this.aiService.suggestCategory(
+          transaction.description,
+          linkedOrderDetails
+        );
+
+        if (suggestedCategory) {
+          transaction.category = suggestedCategory;
+          await this.transactionService.updateTransaction(transaction);
+          successCount++;
+        }
+      } catch (error) {
+        console.error('Error categorizing transaction:', error);
+        errorCount++;
+      }
+
+      this.categorizationProgress.current++;
+    }
+
+    this.isCategorizing = false;
+
+    if (errorCount > 0) {
+      this.snackBar.open(
+        `Categorized ${successCount} transactions (${errorCount} errors)`,
+        '',
+        { duration: 3000 }
+      );
+    } else {
+      this.snackBar.open(
+        `Successfully categorized ${successCount} transactions`,
+        '',
+        { duration: 3000 }
+      );
+    }
+
+    // Reload transactions to reflect changes
+    await this.transactionService.loadTransactions();
+  }
+
+  // Maintenance methods
+  async cleanupCategories() {
+    try {
+      const response = await fetch('http://localhost:3000/categories/cleanup', {
+        method: 'POST'
+      });
+      const result = await response.json();
+
+      if (result.success) {
+        this.snackBar.open(
+          `Removed ${result.categoriesRemoved.length} categories, reset ${result.transactionsReset} transactions`,
+          '',
+          { duration: 4000 }
+        );
+        // Reload data
+        await this.categoryService.loadCategories();
+        await this.transactionService.loadTransactions();
+      }
+    } catch (error) {
+      this.snackBar.open('Failed to cleanup categories', '', { duration: 3000 });
+    }
+  }
+
+  async findDuplicates() {
+    try {
+      const response = await fetch('http://localhost:3000/transactions/find-duplicates', {
+        method: 'POST'
+      });
+      const result = await response.json();
+
+      // Open dialog with results (even if empty - dialog will show "no duplicates" message)
+      const dialogRef = this.dialog.open(DuplicatesDialogComponent, {
+        width: '900px',
+        maxWidth: '95vw',
+        maxHeight: '90vh',
+        data: {
+          groups: result.groups || [],
+          totalDuplicates: result.totalDuplicates || 0
+        }
+      });
+
+      dialogRef.afterClosed().subscribe((result: DuplicatesDialogResult | undefined) => {
+        if (result?.removedIds?.length) {
+          this.snackBar.open(
+            `Removed ${result.removedIds.length} duplicate transaction(s)`,
+            '',
+            { duration: 4000 }
+          );
+          // Reload transactions
+          this.transactionService.loadTransactions();
+        }
+      });
+    } catch (error) {
+      this.snackBar.open('Failed to find duplicates', '', { duration: 3000 });
+    }
+  }
+
+  async removeDuplicates() {
+    try {
+      // First find duplicates
+      const findResponse = await fetch('http://localhost:3000/transactions/find-duplicates', {
+        method: 'POST'
+      });
+      const findResult = await findResponse.json();
+
+      if (findResult.totalDuplicates === 0) {
+        this.snackBar.open('No duplicates found', '', { duration: 3000 });
+        return;
+      }
+
+      // Confirm removal
+      const confirmed = confirm(
+        `Found ${findResult.totalDuplicates} duplicates in ${findResult.totalGroups} groups.\n\n` +
+        `Do you want to auto-remove the duplicates? (The version with most info will be kept)\n\n` +
+        `For manual control, use "Find Duplicates" instead.`
+      );
+
+      if (!confirmed) return;
+
+      const response = await fetch('http://localhost:3000/transactions/remove-duplicates-auto', {
+        method: 'POST'
+      });
+      const result = await response.json();
+
+      if (result.success) {
+        this.snackBar.open(
+          `Removed ${result.removedCount} duplicate transactions`,
+          '',
+          { duration: 4000 }
+        );
+        // Reload transactions
+        await this.transactionService.loadTransactions();
+      }
+    } catch (error) {
+      this.snackBar.open('Failed to remove duplicates', '', { duration: 3000 });
+    }
   }
 }

@@ -91,21 +91,43 @@ export class AIService {
     const apiKey = environment.openAiApiKey;
     const endpoint = 'https://api.openai.com/v1/chat/completions';
 
-    // Build system prompt
-    let systemPrompt = existingCategories.length > 0
-      ? `You are a financial transaction categorizer. Given a transaction description, respond ONLY with a category name.
-         If the transaction fits one of these existing categories, use it: ${existingCategories.map(c => c.name).join(', ')}.
-         If it doesn't fit any existing category, respond with a new, concise category name (1-3 words maximum).
-         DO NOT include any explanations, punctuation, or additional text.`
-      : `You are a financial transaction categorizer. Given a transaction description, respond ONLY with a concise category name (1-3 words maximum).
-         DO NOT include any explanations, punctuation, or additional text.`;
+    // Filter out meaningless categories
+    const forbiddenCategories = ['online shopping', 'new category', 'uncategorized', 'other', 'misc', 'miscellaneous', 'general', 'shopping'];
+    const validCategories = existingCategories.filter(c =>
+      !forbiddenCategories.includes(c.name.toLowerCase())
+    );
+
+    // Build system prompt with strict rules
+    let systemPrompt = `You are a financial transaction categorizer. Your job is to categorize transactions based on what was ACTUALLY purchased, not where it was purchased.
+
+STRICT RULES:
+1. NEVER use generic categories like: "Online Shopping", "Shopping", "New Category", "Uncategorized", "Other", "Misc", "General"
+2. Categorize based on the PRODUCT TYPE, not the retailer
+3. Be SPECIFIC: "Books", "Electronics", "Kitchen Supplies", "Office Supplies", "Pet Food", "Vitamins", "Toys", etc.
+4. If it's clearly a book, use "Books" (even children's books)
+5. If it's clearly electronics/tech, use "Electronics" or "Tech"
+6. If it's food/groceries, use "Groceries" or "Food"
+7. Respond with ONLY the category name - no explanations
+
+${validCategories.length > 0 ? `Existing categories you can use: ${validCategories.map(c => c.name).join(', ')}` : ''}
+
+If you cannot determine a specific category, respond with "Uncategorized" - this is the ONLY acceptable fallback.`;
 
     // Build user message with linked order context if available
     let userMessage = description;
     if (linkedOrderDetails && linkedOrderDetails.length > 0) {
-      systemPrompt += `\n\nIMPORTANT: When linked order details are provided, use them to determine the most appropriate category.
-         The order details show what was actually purchased, which is more specific than the generic bank description.`;
-      userMessage = `Transaction: ${description}\n\nLinked Order Details:\n${linkedOrderDetails.map((d, i) => `${i + 1}. ${d}`).join('\n')}`;
+      systemPrompt += `
+
+CRITICAL: Linked order details are provided below. These show the ACTUAL products purchased.
+You MUST categorize based on these product details, NOT the generic bank description.
+Example: If order shows "Harry Potter Book" - category is "Books", NOT "Online Shopping"`;
+
+      userMessage = `Bank transaction: ${description}
+
+ACTUAL PRODUCTS PURCHASED (use these for categorization):
+${linkedOrderDetails.map((d, i) => `- ${d}`).join('\n')}
+
+Based on the products above, what is the category?`;
     }
 
     const response = await fetch(endpoint, {
@@ -126,7 +148,7 @@ export class AIService {
             content: userMessage
           }
         ],
-        max_tokens: 10,
+        max_tokens: 15,
         temperature: 0.1
       })
     });
@@ -137,18 +159,28 @@ export class AIService {
     }
 
     const data = await response.json();
-    const suggestion = data.choices[0]?.message?.content?.trim();
+    let suggestion = data.choices[0]?.message?.content?.trim();
 
-    // If it's a new category, add it to the system
-    if (suggestion && !existingCategories.some(c => c.name.toLowerCase() === suggestion.toLowerCase())) {
-      this.categoryService.addCategory({
-        id: crypto.randomUUID(),
-        name: suggestion,
-        color: this.generateRandomColor()
-      });
+    // Validate the suggestion - reject forbidden categories
+    if (suggestion && forbiddenCategories.includes(suggestion.toLowerCase())) {
+      console.warn(`AI suggested forbidden category "${suggestion}", falling back to Uncategorized`);
+      return 'Uncategorized';
     }
 
-    return suggestion;
+    // Only auto-create category if it's meaningful (not forbidden)
+    if (suggestion && suggestion !== 'Uncategorized' &&
+        !existingCategories.some(c => c.name.toLowerCase() === suggestion.toLowerCase())) {
+      // Additional validation - don't create if too generic
+      if (suggestion.length > 2 && !forbiddenCategories.some(f => suggestion.toLowerCase().includes(f))) {
+        this.categoryService.addCategory({
+          id: crypto.randomUUID(),
+          name: suggestion,
+          color: this.generateRandomColor()
+        });
+      }
+    }
+
+    return suggestion || 'Uncategorized';
   }
 
   private generateRandomColor(): string {

@@ -209,8 +209,8 @@ export interface TransactionDetailDialogResult {
   `,
   styles: [`
     .transaction-detail-dialog {
-      min-width: 500px;
-      max-width: 600px;
+      min-width: 600px;
+      max-width: 800px;
     }
 
     .dialog-header {
@@ -253,7 +253,7 @@ export interface TransactionDetailDialogResult {
 
     mat-dialog-content {
       padding: 0 24px;
-      max-height: 60vh;
+      max-height: 70vh;
     }
 
     mat-divider {

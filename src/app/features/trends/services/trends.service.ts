@@ -10,6 +10,10 @@ export interface Transaction {
   date: string;
   category: string;
   beneficiary?: string;
+  isContextOnly?: boolean;  // True for Amazon orders (context-only, not real bank transactions)
+  source?: {
+    connectorType: string;
+  };
 }
 
 export interface Category {
@@ -110,10 +114,20 @@ export class TrendsService {
   /**
    * Get all transactions and categories
    */
+  /**
+   * Get all transactions and categories
+   * Filters out context-only transactions (e.g., Amazon orders) which are used
+   * only for linking/categorization, not as actual financial transactions
+   */
   private getData(): Observable<{ transactions: Transaction[]; categories: Category[] }> {
     return forkJoin({
       transactions: this.http.get<{ transactions: Transaction[] }>(`${environment.apiUrl}/transactions`)
-        .pipe(map(res => res.transactions || [])),
+        .pipe(map(res => {
+          const allTransactions = res.transactions || [];
+          // Filter out context-only transactions (Amazon orders, etc.)
+          // These are used only for linking to real bank transactions
+          return allTransactions.filter(t => !t.isContextOnly);
+        })),
       categories: this.http.get<{ categories: Category[] }>(`${environment.apiUrl}/categories`)
         .pipe(map(res => res.categories || []))
     });

@@ -46,10 +46,16 @@ export interface AssistantMessage {
 export interface AssistantResponse {
   message: string;
   data?: {
-    type: 'table' | 'chart' | 'transactions' | 'summary';
+    type: 'table' | 'chart' | 'transactions' | 'summary' | 'category_suggestion';
     content: any;
   };
   suggestedActions?: string[];
+  // Auto-apply actions
+  categoryAction?: {
+    transactionId: string;
+    suggestedCategory: string;
+    confidence: 'high' | 'medium' | 'low';
+  };
 }
 
 export class AIAssistant {

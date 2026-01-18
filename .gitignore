@@ -21,3 +21,4 @@ src/data/
 *.db-wal
 *.db-shm
 .encryption-key
+src/server/.env

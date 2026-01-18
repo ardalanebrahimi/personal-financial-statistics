@@ -13,6 +13,7 @@ import { MatDividerModule } from '@angular/material/divider';
 import { MatBadgeModule } from '@angular/material/badge';
 import { Subject, takeUntil } from 'rxjs';
 import { AIContextService, AIContext, ChatMessage } from '../../services/ai-context.service';
+import { TransactionService } from '../../services/transaction.service';
 import { Transaction } from '../../core/models/transaction.model';
 import { environment } from '../../../environments/environment';
 import { trigger, state, style, animate, transition } from '@angular/animations';
@@ -20,10 +21,15 @@ import { trigger, state, style, animate, transition } from '@angular/animations'
 interface AssistantResponse {
   message: string;
   data?: {
-    type: 'table' | 'chart' | 'transactions' | 'summary';
+    type: 'table' | 'chart' | 'transactions' | 'summary' | 'category_suggestion';
     content: any;
   };
   suggestedActions?: string[];
+  categoryAction?: {
+    transactionId: string;
+    suggestedCategory: string;
+    confidence: 'high' | 'medium' | 'low';
+  };
 }
 
 @Component({
@@ -510,6 +516,7 @@ export class AiFabComponent implements OnInit, OnDestroy {
 
   constructor(
     private aiContextService: AIContextService,
+    private transactionService: TransactionService,
     private http: HttpClient
   ) {}
 
@@ -563,10 +570,15 @@ export class AiFabComponent implements OnInit, OnDestroy {
 
     // Build context message with attached transactions
     let contextMessage = text;
+    const attachedTransactionIds: string[] = [];
     if (this.context.attachedTransactions.length > 0) {
-      const txContext = this.context.attachedTransactions.map(tx =>
-        `- ${tx.date}: ${tx.description} (${tx.amount}€, category: ${tx.category || 'none'})`
-      ).join('\n');
+      const txContext = this.context.attachedTransactions.map(tx => {
+        attachedTransactionIds.push(tx.id);
+        const linkedInfo = tx.linkedOrderIds?.length
+          ? ` [has ${tx.linkedOrderIds.length} linked order(s)]`
+          : '';
+        return `- ${tx.date}: ${tx.description} (${tx.amount}€, category: ${tx.category || 'none'})${linkedInfo}`;
+      }).join('\n');
       contextMessage = `Context - Attached transactions:\n${txContext}\n\nUser question: ${text}`;
     }
 
@@ -585,13 +597,40 @@ export class AiFabComponent implements OnInit, OnDestroy {
     try {
       const response = await this.http.post<AssistantResponse>(
         `${environment.apiUrl}/ai/chat`,
-        { message: contextMessage }
+        {
+          message: contextMessage,
+          attachedTransactionIds: attachedTransactionIds.length > 0 ? attachedTransactionIds : undefined
+        }
       ).toPromise();
 
       if (response) {
+        let messageContent = response.message;
+
+        // Auto-apply category if suggested
+        if (response.categoryAction) {
+          const { transactionId, suggestedCategory, confidence } = response.categoryAction;
+
+          // Find the attached transaction and apply category
+          const tx = this.context.attachedTransactions.find(t => t.id === transactionId);
+          if (tx) {
+            // Update the transaction with new category
+            const updatedTx: Transaction = { ...tx, category: suggestedCategory };
+            this.transactionService.updateTransaction(updatedTx)
+              .then(() => {
+                // Update locally in context
+                tx.category = suggestedCategory;
+              })
+              .catch((err: Error) => console.error('Failed to apply category:', err));
+          }
+
+          // Add confirmation to the message
+          const confidenceEmoji = confidence === 'high' ? '✓' : confidence === 'medium' ? '~' : '?';
+          messageContent += `\n\n${confidenceEmoji} **Category "${suggestedCategory}" has been automatically applied.**`;
+        }
+
         const assistantMessage: Omit<ChatMessage, 'id' | 'timestamp'> = {
           role: 'assistant',
-          content: response.message
+          content: messageContent
         };
 
         // Add suggested actions as clickable prompts
