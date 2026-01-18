@@ -1,11 +1,21 @@
 /**
  * Transaction Matching Models
  *
- * Used to link related transactions across different accounts:
- * - PayPal transactions → Sparkasse "PAYPAL" debits
- * - Mastercard purchases → Sparkasse "ADVANZIA" debits
- * - N26 transfers → Sparkasse transfers
+ * Re-exports shared types and adds frontend-specific extensions.
  */
+
+// Re-export shared types
+export {
+  MatchSource,
+  MatchConfidence,
+  MatchPatternType
+} from '@shared/types';
+
+import type {
+  MatchSource,
+  MatchConfidence,
+  MatchPatternType
+} from '@shared/types';
 
 /**
  * Type of transaction for financial tracking
@@ -13,28 +23,8 @@
 export type TransactionType = 'expense' | 'income' | 'transfer' | 'internal';
 
 /**
- * How the match was created
- */
-export type MatchSource = 'auto' | 'manual' | 'suggested';
-
-/**
- * Confidence level for automatic matches
- */
-export type MatchConfidence = 'high' | 'medium' | 'low';
-
-/**
- * Match pattern types
- */
-export type MatchPatternType =
-  | 'paypal_sparkasse'      // PayPal transaction matched to Sparkasse PAYPAL debit
-  | 'mastercard_sparkasse'  // Mastercard purchase matched to Sparkasse ADVANZIA debit
-  | 'n26_sparkasse'         // N26 transfer matched to Sparkasse transfer
-  | 'internal_transfer'     // Transfer between own accounts
-  | 'refund'                // Refund matched to original purchase
-  | 'custom';               // Manual/custom match
-
-/**
  * A match between two or more related transactions
+ * Frontend version with Date objects
  */
 export interface TransactionMatch {
   id: string;

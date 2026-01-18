@@ -1,38 +1,22 @@
 /**
  * Connector Types
  *
- * Shared types for connector state management and configuration.
+ * Re-exports shared types and adds backend-specific extensions.
  */
 
-export enum ConnectorStatus {
-  DISCONNECTED = 'disconnected',
-  CONNECTING = 'connecting',
-  MFA_REQUIRED = 'mfa_required',
-  CONNECTED = 'connected',
-  FETCHING = 'fetching',
-  ERROR = 'error'
-}
+// Re-export shared types
+export {
+  ConnectorStatus,
+  ConnectorType,
+  MFAType,
+  MFAChallenge,
+  AccountInfo
+} from '@shared/types';
 
-export enum ConnectorType {
-  SPARKASSE = 'sparkasse',
-  N26 = 'n26',
-  PAYPAL = 'paypal',
-  GEBUHRENFREI = 'gebuhrenfrei',
-  AMAZON = 'amazon'
-}
-
-export interface MFAChallenge {
-  type: string;
-  message: string;
-  imageData?: string;
-  expiresAt?: string;
-  decoupled?: boolean;
-  reference?: string;
-}
-
+// Backend-specific connector configuration (extends shared config)
 export interface ConnectorConfig {
   id: string;
-  type: ConnectorType;
+  type: import('@shared/types').ConnectorType;
   name: string;
   enabled: boolean;
   bankCode?: string;
@@ -45,14 +29,17 @@ export interface ConnectorConfig {
   autoConnect?: boolean;
 }
 
+// Backend-specific connector state
 export interface ConnectorState {
   config: ConnectorConfig;
-  status: ConnectorStatus;
+  status: import('@shared/types').ConnectorStatus;
   statusMessage?: string;
-  mfaChallenge?: MFAChallenge;
+  mfaChallenge?: import('@shared/types').MFAChallenge;
 }
 
+// Backend-specific credentials (with PIN)
 export interface ConnectorCredentials {
   userId: string;
   pin: string;
+  bankCode?: string;
 }

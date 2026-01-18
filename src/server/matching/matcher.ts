@@ -8,17 +8,14 @@
  * - N26 transfers → Sparkasse transfers
  */
 
-// Match pattern types
-export type MatchPatternType =
-  | 'paypal_sparkasse'
-  | 'mastercard_sparkasse'
-  | 'n26_sparkasse'
-  | 'internal_transfer'
-  | 'refund'
-  | 'custom';
+// Re-export shared match types
+export {
+  MatchPatternType,
+  MatchSource,
+  MatchConfidence
+} from '@shared/types';
 
-export type MatchSource = 'auto' | 'manual' | 'suggested';
-export type MatchConfidence = 'high' | 'medium' | 'low';
+import type { MatchPatternType, MatchSource, MatchConfidence } from '@shared/types';
 
 // Stored transaction interface (matches server.ts)
 export interface StoredTransaction {

@@ -1,51 +1,30 @@
 /**
- * Connector status enum representing the current state of a connector
+ * Connector Models
+ *
+ * Re-exports shared types and adds frontend-specific extensions.
  */
-export enum ConnectorStatus {
-  DISCONNECTED = 'disconnected',
-  CONNECTING = 'connecting',
-  MFA_REQUIRED = 'mfa_required',
-  CONNECTED = 'connected',
-  FETCHING = 'fetching',
-  ERROR = 'error'
-}
+
+// Re-export shared types
+export {
+  ConnectorStatus,
+  ConnectorType,
+  MFAType,
+  MFAChallenge as SharedMFAChallenge,
+  AccountInfo
+} from '@shared/types';
+
+import {
+  ConnectorStatus,
+  ConnectorType,
+  MFAType,
+  MFAChallenge as SharedMFAChallenge
+} from '@shared/types';
 
 /**
- * Types of MFA challenges that connectors may require
+ * MFA challenge with Date objects for frontend use
  */
-export enum MFAType {
-  SMS = 'sms',
-  EMAIL = 'email',
-  PUSH = 'push',
-  PHOTO_TAN = 'photo_tan',
-  CHIP_TAN = 'chip_tan',
-  APP_TAN = 'app_tan',
-  TOTP = 'totp',
-  DECOUPLED = 'decoupled' // pushTAN where user confirms in banking app
-}
-
-/**
- * Connector type identifies which financial service the connector interfaces with
- */
-export enum ConnectorType {
-  SPARKASSE = 'sparkasse',
-  N26 = 'n26',
-  GEBUHRENFREI = 'gebuhrenfrei',
-  AMAZON = 'amazon',
-  PAYPAL = 'paypal'
-}
-
-/**
- * MFA challenge presented to the user during authentication
- */
-export interface MFAChallenge {
-  type: MFAType;
-  message: string;
-  imageData?: string; // Base64 encoded image for photoTAN
+export interface MFAChallenge extends Omit<SharedMFAChallenge, 'expiresAt'> {
   expiresAt?: Date;
-  attemptsRemaining?: number;
-  decoupled?: boolean; // If true, user confirms in external app (no code needed)
-  reference?: string; // Reference for polling decoupled TAN status
 }
 
 /**
