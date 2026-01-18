@@ -1,79 +1,32 @@
-import { Component, Inject, OnInit, ViewChild, ElementRef, AfterViewInit } from '@angular/core';
+/**
+ * Matching Overview Dialog Component
+ *
+ * Dialog for reviewing and linking bank transactions with Amazon/PayPal data.
+ */
+
+import { Component, Inject, OnInit, ViewChild, ElementRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatDialogModule, MatDialogRef, MAT_DIALOG_DATA } from '@angular/material/dialog';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
-import { MatTabsModule } from '@angular/material/tabs';
 import { MatCheckboxModule } from '@angular/material/checkbox';
-import { MatChipsModule } from '@angular/material/chips';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { MatDividerModule } from '@angular/material/divider';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatSliderModule } from '@angular/material/slider';
-import { environment } from '../../../environments/environment';
 
-interface MatchingSuggestion {
-  bankTransactionId: string;
-  contextIds: string[];
-  confidence: 'high' | 'medium' | 'low';
-  totalAmount: number;
-  amountDiff: number;
-}
-
-interface TransactionData {
-  id: string;
-  date: string;
-  description: string;
-  amount: number;
-  beneficiary?: string;
-  category?: string;
-  source?: {
-    connectorType: string;
-  };
-  isContextOnly?: boolean;
-  linkedOrderIds?: string[];
-}
-
-interface MatchingOverviewData {
-  amazon: {
-    bankUnlinked: TransactionData[];
-    ordersUnlinked: TransactionData[];
-    bankLinked: TransactionData[];
-    suggestions: MatchingSuggestion[];
-    stats: {
-      totalBankCharges: number;
-      linkedBankCharges: number;
-      unlinkedBankCharges: number;
-      totalOrders: number;
-      unlinkedOrders: number;
-      suggestionCount: number;
-    };
-  };
-  paypal: {
-    bankUnlinked: TransactionData[];
-    importsUnlinked: TransactionData[];
-    bankLinked: TransactionData[];
-    suggestions: MatchingSuggestion[];
-    stats: {
-      totalBankCharges: number;
-      linkedBankCharges: number;
-      unlinkedBankCharges: number;
-      totalImports: number;
-      unlinkedImports: number;
-      suggestionCount: number;
-    };
-  };
-}
-
-export interface MatchingOverviewDialogResult {
-  linkedPairs: Array<{
-    bankTransactionId: string;
-    contextTransactionIds: string[];
-  }>;
-}
+import {
+  MatchingService,
+  MatchingOverviewData,
+  TransactionData,
+  MatchingSuggestion,
+  PlatformType
+} from './services/matching.service';
+import { MatchingStatsBarComponent } from './components/matching/matching-stats-bar.component';
+import { MatchingLinkSummaryComponent } from './components/matching/matching-link-summary.component';
+import { MatchingTxItemComponent } from './components/matching/matching-tx-item.component';
 
 @Component({
   selector: 'app-matching-overview-dialog',
@@ -84,15 +37,15 @@ export interface MatchingOverviewDialogResult {
     MatDialogModule,
     MatButtonModule,
     MatIconModule,
-    MatTabsModule,
     MatCheckboxModule,
-    MatChipsModule,
     MatSnackBarModule,
     MatTooltipModule,
-    MatDividerModule,
     MatProgressSpinnerModule,
     MatButtonToggleModule,
-    MatSliderModule
+    MatSliderModule,
+    MatchingStatsBarComponent,
+    MatchingLinkSummaryComponent,
+    MatchingTxItemComponent
   ],
   template: `
     <div class="matching-overview-dialog">
@@ -128,24 +81,12 @@ export interface MatchingOverviewDialogResult {
 
         <ng-container *ngIf="!isLoading && data">
           <!-- Stats Bar -->
-          <div class="stats-bar">
-            <div class="stat-item">
-              <span class="stat-value">{{ getCurrentStats().unlinkedBankCharges }}</span>
-              <span class="stat-label">Unlinked Bank Charges</span>
-            </div>
-            <div class="stat-item">
-              <span class="stat-value">{{ getUnlinkedContextCount() }}</span>
-              <span class="stat-label">Unlinked {{ selectedPlatform === 'amazon' ? 'Orders' : 'Transactions' }}</span>
-            </div>
-            <div class="stat-item">
-              <span class="stat-value">{{ getCurrentSuggestions().length }}</span>
-              <span class="stat-label">Suggestions</span>
-            </div>
-            <div class="stat-item linked">
-              <span class="stat-value">{{ getCurrentStats().linkedBankCharges }}</span>
-              <span class="stat-label">Already Linked</span>
-            </div>
-          </div>
+          <app-matching-stats-bar
+            [stats]="matchingService.getStats(data, selectedPlatform)"
+            [platform]="selectedPlatform"
+            [unlinkedContextCount]="getUnlinkedContextCount()"
+            [suggestionCount]="matchingService.getSuggestions(data, selectedPlatform).length">
+          </app-matching-stats-bar>
 
           <!-- Two-Panel Layout -->
           <div class="matching-panels">
@@ -167,68 +108,37 @@ export interface MatchingOverviewDialogResult {
               </div>
               <p class="panel-hint">Select a bank charge to match, or check multiple with suggestions for batch linking</p>
 
-              <div class="transaction-list" *ngIf="getCurrentBankUnlinked().length > 0">
-                <div *ngFor="let tx of getCurrentBankUnlinked()"
-                     class="transaction-item"
-                     [class.selected]="selectedBankTx?.id === tx.id"
-                     [class.has-suggestion]="hasSuggestionFor(tx.id)"
-                     [class.batch-selected]="batchSelectedBankIds.has(tx.id)"
-                     (click)="selectBankTx(tx)">
-                  <mat-checkbox
-                    *ngIf="hasSuggestionFor(tx.id)"
-                    [checked]="batchSelectedBankIds.has(tx.id)"
-                    (click)="$event.stopPropagation()"
-                    (change)="toggleBatchSelect(tx.id, $event.checked)"
-                    class="batch-checkbox">
-                  </mat-checkbox>
-                  <div class="tx-main">
-                    <div class="tx-date">{{ tx.date | date:'dd.MM.yy' }}</div>
-                    <div class="tx-desc" [matTooltip]="tx.description">{{ tx.description | slice:0:35 }}{{ tx.description.length > 35 ? '...' : '' }}</div>
-                    <div class="tx-amount" [class.negative]="tx.amount < 0">
-                      {{ tx.amount | currency:'EUR':'symbol':'1.2-2' }}
-                    </div>
-                  </div>
-                  <div class="tx-suggestion" *ngIf="hasSuggestionFor(tx.id)">
-                    <mat-icon>lightbulb</mat-icon>
-                    <span>Suggestion available</span>
-                  </div>
-                </div>
+              <div class="transaction-list" *ngIf="getBankUnlinked().length > 0">
+                <app-matching-tx-item
+                  *ngFor="let tx of getBankUnlinked()"
+                  [transaction]="tx"
+                  [isSelected]="selectedBankTx?.id === tx.id"
+                  [isChecked]="batchSelectedBankIds.has(tx.id)"
+                  [hasSuggestion]="matchingService.hasSuggestionFor(data, selectedPlatform, tx.id)"
+                  [isBatchSelected]="batchSelectedBankIds.has(tx.id)"
+                  [showCheckbox]="matchingService.hasSuggestionFor(data, selectedPlatform, tx.id)"
+                  (itemClick)="selectBankTx(tx)"
+                  (checkboxChange)="toggleBatchSelect(tx.id, $event)">
+                </app-matching-tx-item>
               </div>
 
-              <div class="empty-state" *ngIf="getCurrentBankUnlinked().length === 0">
+              <div class="empty-state" *ngIf="getBankUnlinked().length === 0">
                 <mat-icon>check_circle</mat-icon>
                 <span>All matched!</span>
               </div>
             </div>
 
             <!-- Center: Link indicator -->
-            <div class="link-indicator">
-              <mat-icon class="link-arrow" *ngIf="selectedBankTx && selectedContextTxIds.size > 0">link</mat-icon>
-              <mat-icon class="link-arrow dimmed" *ngIf="!selectedBankTx || selectedContextTxIds.size === 0">link_off</mat-icon>
+            <app-matching-link-summary
+              [selectedBankTx]="selectedBankTx"
+              [selectedTotal]="getSelectedTotal()"
+              [selectedCount]="selectedContextTxIds.size"
+              [isMatch]="isAmountMatch()"
+              [isCloseMatch]="isCloseMatch()"
+              [difference]="getDifference()">
+            </app-matching-link-summary>
 
-              <div class="link-summary" *ngIf="selectedBankTx">
-                <div class="summary-row">
-                  <span class="label">Bank:</span>
-                  <span class="value">{{ selectedBankTx.amount | currency:'EUR':'symbol':'1.2-2' }}</span>
-                </div>
-                <div class="summary-row" *ngIf="selectedContextTxIds.size > 0">
-                  <span class="label">Selected:</span>
-                  <span class="value">{{ getSelectedTotal() | currency:'EUR':'symbol':'1.2-2' }}</span>
-                </div>
-                <div class="summary-row match-status" *ngIf="selectedContextTxIds.size > 0"
-                     [class.match]="isAmountMatch()"
-                     [class.close-match]="isCloseMatch()"
-                     [class.mismatch]="!isAmountMatch() && !isCloseMatch()">
-                  <mat-icon *ngIf="isAmountMatch()">check_circle</mat-icon>
-                  <mat-icon *ngIf="isCloseMatch() && !isAmountMatch()">warning</mat-icon>
-                  <mat-icon *ngIf="!isAmountMatch() && !isCloseMatch()">error</mat-icon>
-                  <span *ngIf="isAmountMatch()">Match!</span>
-                  <span *ngIf="!isAmountMatch()">Diff: {{ getDifference() | currency:'EUR':'symbol':'1.2-2' }}</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- Right Panel: Context Transactions (Orders/Imports) -->
+            <!-- Right Panel: Context Transactions -->
             <div class="panel context-panel">
               <h3>
                 <mat-icon *ngIf="selectedPlatform === 'amazon'">shopping_cart</mat-icon>
@@ -238,40 +148,33 @@ export interface MatchingOverviewDialogResult {
               <p class="panel-hint">Select items to link</p>
 
               <!-- Date Range Slider -->
-              <div class="date-range-control" *ngIf="selectedBankTx && !hasSuggestionFor(selectedBankTx.id)">
+              <div class="date-range-control" *ngIf="selectedBankTx && !matchingService.hasSuggestionFor(data, selectedPlatform, selectedBankTx.id)">
                 <div class="date-range-label">
                   <mat-icon>date_range</mat-icon>
                   <span>Search range: {{ dateRangeDays }} days</span>
                 </div>
                 <mat-slider min="7" max="60" step="1" discrete [displayWith]="formatDays">
-                  <input matSliderThumb [(ngModel)]="dateRangeDays" (ngModelChange)="onDateRangeChange()">
+                  <input matSliderThumb [(ngModel)]="dateRangeDays">
                 </mat-slider>
                 <span class="date-range-hint">Increase to find matches further away</span>
               </div>
 
-              <div class="transaction-list" #contextList *ngIf="getCurrentContextUnlinked().length > 0">
-                <div *ngFor="let tx of getFilteredContextTx()"
-                     class="transaction-item"
-                     [id]="'context-tx-' + tx.id"
-                     [class.selected]="selectedContextTxIds.has(tx.id)"
-                     [class.suggested]="isSuggestedFor(tx.id)"
-                     (click)="toggleContextTx(tx)">
-                  <mat-checkbox
-                    [checked]="selectedContextTxIds.has(tx.id)"
-                    (click)="$event.stopPropagation()"
-                    (change)="toggleContextTx(tx)">
-                  </mat-checkbox>
-                  <div class="tx-main">
-                    <div class="tx-date">{{ tx.date | date:'dd.MM.yy' }}</div>
-                    <div class="tx-desc" [matTooltip]="tx.description">{{ tx.description | slice:0:35 }}{{ tx.description.length > 35 ? '...' : '' }}</div>
-                    <div class="tx-amount" [class.negative]="tx.amount < 0">
-                      {{ tx.amount | currency:'EUR':'symbol':'1.2-2' }}
-                    </div>
-                  </div>
-                </div>
+              <div class="transaction-list" *ngIf="getContextUnlinked().length > 0">
+                <app-matching-tx-item
+                  *ngFor="let tx of getFilteredContextTx()"
+                  [id]="'context-tx-' + tx.id"
+                  [transaction]="tx"
+                  [isSelected]="selectedContextTxIds.has(tx.id)"
+                  [isChecked]="selectedContextTxIds.has(tx.id)"
+                  [isSuggested]="isSuggestedFor(tx.id)"
+                  [showCheckbox]="true"
+                  [showCheckboxOnly]="true"
+                  (itemClick)="toggleContextTx(tx)"
+                  (checkboxChange)="toggleContextTx(tx)">
+                </app-matching-tx-item>
               </div>
 
-              <div class="empty-state" *ngIf="getCurrentContextUnlinked().length === 0">
+              <div class="empty-state" *ngIf="getContextUnlinked().length === 0">
                 <mat-icon>info</mat-icon>
                 <span>No unlinked {{ selectedPlatform === 'amazon' ? 'orders' : 'transactions' }}</span>
                 <p class="hint">Import {{ selectedPlatform === 'amazon' ? 'Amazon orders' : 'PayPal transactions' }} to match</p>
@@ -340,13 +243,9 @@ export interface MatchingOverviewDialogResult {
       font-weight: 500;
     }
 
-    .header-left mat-icon {
-      color: #1976d2;
-    }
+    .header-left mat-icon { color: #1976d2; }
 
-    mat-button-toggle-group {
-      margin-left: auto;
-    }
+    mat-button-toggle-group { margin-left: auto; }
 
     .badge {
       background: #f44336;
@@ -357,13 +256,8 @@ export interface MatchingOverviewDialogResult {
       margin-left: 8px;
     }
 
-    .amazon-icon {
-      color: #ff9800 !important;
-    }
-
-    .paypal-icon {
-      color: #0070ba !important;
-    }
+    .amazon-icon { color: #ff9800 !important; }
+    .paypal-icon { color: #0070ba !important; }
 
     mat-dialog-content {
       padding: 0 !important;
@@ -382,34 +276,6 @@ export interface MatchingOverviewDialogResult {
       padding: 48px;
       gap: 16px;
       color: #666;
-    }
-
-    .stats-bar {
-      display: flex;
-      gap: 24px;
-      padding: 16px 24px;
-      background: #fafafa;
-      border-bottom: 1px solid #e0e0e0;
-    }
-
-    .stat-item {
-      display: flex;
-      flex-direction: column;
-    }
-
-    .stat-item .stat-value {
-      font-size: 24px;
-      font-weight: 600;
-      color: #333;
-    }
-
-    .stat-item .stat-label {
-      font-size: 12px;
-      color: #666;
-    }
-
-    .stat-item.linked .stat-value {
-      color: #4caf50;
     }
 
     .matching-panels {
@@ -453,18 +319,7 @@ export interface MatchingOverviewDialogResult {
       margin-bottom: 4px;
     }
 
-    .panel-header mat-checkbox {
-      font-size: 12px;
-    }
-
-    .batch-checkbox {
-      margin-right: 8px;
-    }
-
-    .transaction-item.batch-selected {
-      background: #e8f5e9;
-      border-color: #4caf50;
-    }
+    .panel-header mat-checkbox { font-size: 12px; }
 
     .date-range-control {
       background: #f5f5f5;
@@ -489,9 +344,7 @@ export interface MatchingOverviewDialogResult {
       color: #666;
     }
 
-    .date-range-control mat-slider {
-      width: 100%;
-    }
+    .date-range-control mat-slider { width: 100%; }
 
     .date-range-hint {
       display: block;
@@ -500,176 +353,12 @@ export interface MatchingOverviewDialogResult {
       margin-top: 4px;
     }
 
-    .bank-panel {
-      border-right: 1px solid #e0e0e0;
-    }
-
-    .context-panel {
-      border-left: 1px solid #e0e0e0;
-    }
-
-    .link-indicator {
-      width: 120px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 16px;
-      background: #f5f5f5;
-    }
-
-    .link-arrow {
-      font-size: 36px;
-      width: 36px;
-      height: 36px;
-      color: #4caf50;
-    }
-
-    .link-arrow.dimmed {
-      color: #ccc;
-    }
-
-    .link-summary {
-      margin-top: 16px;
-      text-align: center;
-    }
-
-    .summary-row {
-      display: flex;
-      justify-content: space-between;
-      gap: 8px;
-      font-size: 12px;
-      margin-bottom: 4px;
-    }
-
-    .summary-row .label {
-      color: #666;
-    }
-
-    .summary-row .value {
-      font-weight: 500;
-      font-family: 'Roboto Mono', monospace;
-    }
-
-    .match-status {
-      margin-top: 8px;
-      padding: 4px 8px;
-      border-radius: 4px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 4px;
-    }
-
-    .match-status mat-icon {
-      font-size: 16px;
-      width: 16px;
-      height: 16px;
-    }
-
-    .match-status.match {
-      background: #c8e6c9;
-      color: #2e7d32;
-    }
-
-    .match-status.close-match {
-      background: #fff9c4;
-      color: #f9a825;
-    }
-
-    .match-status.mismatch {
-      background: #ffcdd2;
-      color: #c62828;
-    }
+    .bank-panel { border-right: 1px solid #e0e0e0; }
+    .context-panel { border-left: 1px solid #e0e0e0; }
 
     .transaction-list {
       flex: 1;
       overflow-y: auto;
-    }
-
-    .transaction-item {
-      padding: 10px 12px;
-      border: 1px solid #e0e0e0;
-      border-radius: 8px;
-      margin-bottom: 8px;
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-
-    .transaction-item:hover {
-      background: #f5f5f5;
-      border-color: #ccc;
-    }
-
-    .transaction-item.selected {
-      background: #e3f2fd;
-      border-color: #1976d2;
-    }
-
-    .transaction-item.has-suggestion {
-      border-color: #ff9800;
-    }
-
-    .transaction-item.suggested {
-      background: #fff3e0;
-      border-color: #ff9800;
-    }
-
-    .tx-main {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-
-    .tx-date {
-      font-size: 12px;
-      color: #666;
-      min-width: 60px;
-    }
-
-    .tx-desc {
-      flex: 1;
-      font-size: 13px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .tx-amount {
-      font-size: 13px;
-      font-weight: 600;
-      font-family: 'Roboto Mono', monospace;
-      min-width: 80px;
-      text-align: right;
-    }
-
-    .tx-amount.negative {
-      color: #d32f2f;
-    }
-
-    .tx-suggestion {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      margin-top: 6px;
-      font-size: 11px;
-      color: #ff9800;
-    }
-
-    .tx-suggestion mat-icon {
-      font-size: 14px;
-      width: 14px;
-      height: 14px;
-    }
-
-    .context-panel .transaction-item {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .context-panel .tx-main {
-      flex: 1;
     }
 
     .empty-state {
@@ -702,160 +391,93 @@ export interface MatchingOverviewDialogResult {
       gap: 8px;
     }
 
-    .spacer {
-      flex: 1;
-    }
+    .spacer { flex: 1; }
   `]
 })
 export class MatchingOverviewDialogComponent implements OnInit {
   @ViewChild('contextList') contextListRef!: ElementRef;
 
-  selectedPlatform: 'amazon' | 'paypal' = 'amazon';
+  selectedPlatform: PlatformType = 'amazon';
   isLoading = true;
   data: MatchingOverviewData | null = null;
 
-  // Selection state
   selectedBankTx: TransactionData | null = null;
   selectedContextTxIds = new Set<string>();
-
-  // Batch selection state
   batchSelectedBankIds = new Set<string>();
-
-  // Date range for manual matching (days)
   dateRangeDays = 7;
-
-  // Current suggestions for selected bank transaction
   currentSuggestion: MatchingSuggestion | null = null;
 
   constructor(
     private dialogRef: MatDialogRef<MatchingOverviewDialogComponent>,
     private snackBar: MatSnackBar,
+    public matchingService: MatchingService,
     @Inject(MAT_DIALOG_DATA) public dialogData: any
   ) {}
 
-  // Format function for slider display
   formatDays = (value: number): string => `${value}d`;
 
-  ngOnInit() {
+  ngOnInit(): void {
     this.loadData();
   }
 
-  async loadData() {
+  async loadData(): Promise<void> {
     this.isLoading = true;
-    try {
-      const response = await fetch(`${environment.apiUrl}/matching/overview`);
-      this.data = await response.json();
-
-      // Auto-select platform with most unlinked items
-      if (this.data) {
-        const amazonUnlinked = this.data.amazon.stats.unlinkedBankCharges;
-        const paypalUnlinked = this.data.paypal.stats.unlinkedBankCharges;
-        this.selectedPlatform = amazonUnlinked >= paypalUnlinked ? 'amazon' : 'paypal';
-      }
-    } catch (error) {
-      console.error('Error loading matching data:', error);
-      this.snackBar.open('Failed to load matching data', '', { duration: 3000 });
+    this.data = await this.matchingService.loadOverviewData();
+    if (this.data) {
+      this.selectedPlatform = this.matchingService.getDefaultPlatform(this.data);
     }
     this.isLoading = false;
   }
 
-  onPlatformChange() {
+  onPlatformChange(): void {
     this.clearSelection();
     this.batchSelectedBankIds.clear();
   }
 
-  clearSelection() {
+  clearSelection(): void {
     this.selectedBankTx = null;
     this.selectedContextTxIds.clear();
     this.currentSuggestion = null;
     this.dateRangeDays = 7;
   }
 
-  onDateRangeChange() {
-    // Trigger re-filter of context transactions
+  // Data accessors
+  getBankUnlinked(): TransactionData[] {
+    return this.matchingService.getBankUnlinked(this.data, this.selectedPlatform);
   }
 
-  getCurrentStats() {
-    const defaultStats = { totalBankCharges: 0, linkedBankCharges: 0, unlinkedBankCharges: 0, totalOrders: 0, unlinkedOrders: 0, suggestionCount: 0, totalImports: 0, unlinkedImports: 0 };
-    if (!this.data) return defaultStats;
-    if (this.selectedPlatform === 'amazon') {
-      return this.data.amazon?.stats || defaultStats;
-    }
-    return this.data.paypal?.stats || defaultStats;
+  getContextUnlinked(): TransactionData[] {
+    return this.matchingService.getContextUnlinked(this.data, this.selectedPlatform);
   }
 
   getUnlinkedContextCount(): number {
-    if (!this.data) return 0;
-    if (this.selectedPlatform === 'amazon') {
-      return this.data.amazon?.ordersUnlinked?.length || 0;
-    }
-    return this.data.paypal?.importsUnlinked?.length || 0;
+    return this.getContextUnlinked().length;
   }
 
-  getCurrentSuggestions(): MatchingSuggestion[] {
-    if (!this.data) return [];
-    if (this.selectedPlatform === 'amazon') {
-      return this.data.amazon?.suggestions || [];
-    }
-    return this.data.paypal?.suggestions || [];
-  }
-
-  getCurrentBankUnlinked(): TransactionData[] {
-    if (!this.data) return [];
-    if (this.selectedPlatform === 'amazon') {
-      return this.data.amazon?.bankUnlinked || [];
-    }
-    return this.data.paypal?.bankUnlinked || [];
-  }
-
-  getCurrentContextUnlinked(): TransactionData[] {
-    if (!this.data) return [];
-    if (this.selectedPlatform === 'amazon') {
-      return this.data.amazon?.ordersUnlinked || [];
-    }
-    return this.data.paypal?.importsUnlinked || [];
-  }
-
-  hasSuggestionFor(bankTxId: string): boolean {
-    return this.getCurrentSuggestions().some(s => s.bankTransactionId === bankTxId);
-  }
-
-  getSuggestionFor(bankTxId: string): MatchingSuggestion | undefined {
-    return this.getCurrentSuggestions().find(s => s.bankTransactionId === bankTxId);
-  }
-
-  isSuggestedFor(contextTxId: string): boolean {
-    if (!this.selectedBankTx) return false;
-    const suggestion = this.getSuggestionFor(this.selectedBankTx.id);
-    return suggestion?.contextIds.includes(contextTxId) || false;
-  }
-
-  selectBankTx(tx: TransactionData) {
+  // Selection methods
+  selectBankTx(tx: TransactionData): void {
     this.selectedBankTx = tx;
     this.selectedContextTxIds.clear();
-    this.dateRangeDays = 7; // Reset date range on new selection
+    this.dateRangeDays = 7;
 
-    // Auto-select suggested matches
-    const suggestion = this.getSuggestionFor(tx.id);
+    const suggestion = this.matchingService.getSuggestionFor(this.data, this.selectedPlatform, tx.id);
     if (suggestion) {
       this.currentSuggestion = suggestion;
       suggestion.contextIds.forEach(id => this.selectedContextTxIds.add(id));
-
-      // Auto-scroll to first suggested match after a brief delay for DOM update
       setTimeout(() => this.scrollToSuggestedMatch(suggestion.contextIds[0]), 50);
     } else {
       this.currentSuggestion = null;
     }
   }
 
-  scrollToSuggestedMatch(contextTxId: string) {
+  scrollToSuggestedMatch(contextTxId: string): void {
     const element = document.getElementById(`context-tx-${contextTxId}`);
     if (element) {
       element.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
   }
 
-  toggleContextTx(tx: TransactionData) {
+  toggleContextTx(tx: TransactionData): void {
     if (this.selectedContextTxIds.has(tx.id)) {
       this.selectedContextTxIds.delete(tx.id);
     } else {
@@ -863,23 +485,27 @@ export class MatchingOverviewDialogComponent implements OnInit {
     }
   }
 
+  isSuggestedFor(contextTxId: string): boolean {
+    if (!this.selectedBankTx) return false;
+    const suggestion = this.matchingService.getSuggestionFor(this.data, this.selectedPlatform, this.selectedBankTx.id);
+    return suggestion?.contextIds.includes(contextTxId) || false;
+  }
+
   getFilteredContextTx(): TransactionData[] {
-    const contextTxs = this.getCurrentContextUnlinked();
+    const contextTxs = this.getContextUnlinked();
     if (!this.selectedBankTx) return contextTxs;
 
     const bankDate = new Date(this.selectedBankTx.date).getTime();
     const maxDaysMs = this.dateRangeDays * 24 * 60 * 60 * 1000;
 
-    // Filter by date range if no suggestion exists for this bank transaction
     let filtered = contextTxs;
-    if (!this.hasSuggestionFor(this.selectedBankTx.id)) {
+    if (!this.matchingService.hasSuggestionFor(this.data, this.selectedPlatform, this.selectedBankTx.id)) {
       filtered = contextTxs.filter(tx => {
         const diff = Math.abs(new Date(tx.date).getTime() - bankDate);
         return diff <= maxDaysMs;
       });
     }
 
-    // Sort by date proximity to selected bank transaction
     return [...filtered].sort((a, b) => {
       const aDiff = Math.abs(new Date(a.date).getTime() - bankDate);
       const bDiff = Math.abs(new Date(b.date).getTime() - bankDate);
@@ -887,12 +513,14 @@ export class MatchingOverviewDialogComponent implements OnInit {
     });
   }
 
-  // Batch selection methods
+  // Batch selection
   getBatchSelectableBankTxs(): TransactionData[] {
-    return this.getCurrentBankUnlinked().filter(tx => this.hasSuggestionFor(tx.id));
+    return this.getBankUnlinked().filter(tx =>
+      this.matchingService.hasSuggestionFor(this.data, this.selectedPlatform, tx.id)
+    );
   }
 
-  toggleBatchSelect(bankTxId: string, selected: boolean) {
+  toggleBatchSelect(bankTxId: string, selected: boolean): void {
     if (selected) {
       this.batchSelectedBankIds.add(bankTxId);
     } else {
@@ -911,7 +539,7 @@ export class MatchingOverviewDialogComponent implements OnInit {
     return selectedCount > 0 && selectedCount < selectable.length;
   }
 
-  toggleAllSuggestions(selected: boolean) {
+  toggleAllSuggestions(selected: boolean): void {
     const selectable = this.getBatchSelectableBankTxs();
     if (selected) {
       selectable.forEach(tx => this.batchSelectedBankIds.add(tx.id));
@@ -920,83 +548,30 @@ export class MatchingOverviewDialogComponent implements OnInit {
     }
   }
 
-  async linkBatchSelected() {
-    if (this.batchSelectedBankIds.size === 0) return;
-
-    const endpoint = this.selectedPlatform === 'amazon'
-      ? '/order-matching/link'
-      : '/paypal-matching/link';
-
-    let successCount = 0;
-    let errorCount = 0;
-
-    for (const bankTxId of this.batchSelectedBankIds) {
-      const suggestion = this.getSuggestionFor(bankTxId);
-      if (!suggestion) continue;
-
-      const body = this.selectedPlatform === 'amazon'
-        ? { bankTransactionId: bankTxId, orderIds: suggestion.contextIds }
-        : { bankTransactionId: bankTxId, paypalIds: suggestion.contextIds };
-
-      try {
-        const response = await fetch(`${environment.apiUrl}${endpoint}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
-        });
-
-        if (response.ok) {
-          successCount++;
-        } else {
-          errorCount++;
-        }
-      } catch (error) {
-        errorCount++;
-      }
-    }
-
-    if (errorCount > 0) {
-      this.snackBar.open(`Linked ${successCount}, ${errorCount} failed`, '', { duration: 3000 });
-    } else {
-      this.snackBar.open(`Successfully linked ${successCount} transactions`, '', { duration: 2000 });
-    }
-
-    // Clear batch selection and reload data
-    this.batchSelectedBankIds.clear();
-    await this.loadData();
-    this.clearSelection();
-  }
-
+  // Amount calculations
   getSelectedTotal(): number {
-    const contextTxs = this.getCurrentContextUnlinked();
+    const contextTxs = this.getContextUnlinked();
     let total = 0;
     this.selectedContextTxIds.forEach(id => {
       const tx = contextTxs.find(t => t.id === id);
       if (tx) total += Math.abs(tx.amount);
     });
-    return -total; // Return as negative since these are expenses
+    return -total;
   }
 
   isAmountMatch(): boolean {
     if (!this.selectedBankTx || this.selectedContextTxIds.size === 0) return false;
-    const bankAmount = Math.abs(this.selectedBankTx.amount);
-    const selectedAmount = Math.abs(this.getSelectedTotal());
-    return Math.abs(bankAmount - selectedAmount) < 0.05;
+    return this.matchingService.isAmountMatch(this.selectedBankTx.amount, this.getSelectedTotal());
   }
 
   isCloseMatch(): boolean {
     if (!this.selectedBankTx || this.selectedContextTxIds.size === 0) return false;
-    const bankAmount = Math.abs(this.selectedBankTx.amount);
-    const selectedAmount = Math.abs(this.getSelectedTotal());
-    const diff = Math.abs(bankAmount - selectedAmount);
-    return diff >= 0.05 && diff < 5.0;
+    return this.matchingService.isCloseMatch(this.selectedBankTx.amount, this.getSelectedTotal());
   }
 
   getDifference(): number {
     if (!this.selectedBankTx) return 0;
-    const bankAmount = Math.abs(this.selectedBankTx.amount);
-    const selectedAmount = Math.abs(this.getSelectedTotal());
-    return Math.abs(bankAmount - selectedAmount);
+    return Math.abs(Math.abs(this.selectedBankTx.amount) - Math.abs(this.getSelectedTotal()));
   }
 
   canLink(): boolean {
@@ -1004,80 +579,51 @@ export class MatchingOverviewDialogComponent implements OnInit {
   }
 
   hasHighConfidenceSuggestions(): boolean {
-    return this.getCurrentSuggestions().some(s => s.confidence === 'high');
+    return this.matchingService.getSuggestions(this.data, this.selectedPlatform).some(s => s.confidence === 'high');
   }
 
   getHighConfidenceSuggestionCount(): number {
-    return this.getCurrentSuggestions().filter(s => s.confidence === 'high').length;
+    return this.matchingService.getHighConfidenceSuggestionCount(this.data, this.selectedPlatform);
   }
 
-  async linkSelected() {
+  // Linking actions
+  async linkSelected(): Promise<void> {
     if (!this.selectedBankTx || this.selectedContextTxIds.size === 0) return;
 
-    const endpoint = this.selectedPlatform === 'amazon'
-      ? '/order-matching/link'
-      : '/paypal-matching/link';
+    const result = await this.matchingService.linkTransactions(
+      this.selectedPlatform,
+      this.selectedBankTx.id,
+      Array.from(this.selectedContextTxIds)
+    );
 
-    const body = this.selectedPlatform === 'amazon'
-      ? { bankTransactionId: this.selectedBankTx.id, orderIds: Array.from(this.selectedContextTxIds) }
-      : { bankTransactionId: this.selectedBankTx.id, paypalIds: Array.from(this.selectedContextTxIds) };
-
-    try {
-      const response = await fetch(`${environment.apiUrl}${endpoint}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to link');
-      }
-
+    if (result.success) {
       this.snackBar.open('Linked successfully!', '', { duration: 2000 });
-
-      // Reload data
       await this.loadData();
       this.clearSelection();
-
-    } catch (error) {
-      console.error('Error linking:', error);
+    } else {
       this.snackBar.open('Failed to link transactions', '', { duration: 3000 });
     }
   }
 
-  async autoMatchAll() {
-    const highConfidenceSuggestions = this.getCurrentSuggestions().filter(s => s.confidence === 'high');
-
-    if (highConfidenceSuggestions.length === 0) {
-      this.snackBar.open('No high-confidence matches found', '', { duration: 2000 });
-      return;
-    }
-
-    const endpoint = this.selectedPlatform === 'amazon'
-      ? '/order-matching/link'
-      : '/paypal-matching/link';
+  async linkBatchSelected(): Promise<void> {
+    if (this.batchSelectedBankIds.size === 0) return;
 
     let successCount = 0;
     let errorCount = 0;
 
-    for (const suggestion of highConfidenceSuggestions) {
-      const body = this.selectedPlatform === 'amazon'
-        ? { bankTransactionId: suggestion.bankTransactionId, orderIds: suggestion.contextIds }
-        : { bankTransactionId: suggestion.bankTransactionId, paypalIds: suggestion.contextIds };
+    for (const bankTxId of this.batchSelectedBankIds) {
+      const suggestion = this.matchingService.getSuggestionFor(this.data, this.selectedPlatform, bankTxId);
+      if (!suggestion) continue;
 
-      try {
-        const response = await fetch(`${environment.apiUrl}${endpoint}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
-        });
+      const result = await this.matchingService.linkTransactions(
+        this.selectedPlatform,
+        bankTxId,
+        suggestion.contextIds
+      );
 
-        if (response.ok) {
-          successCount++;
-        } else {
-          errorCount++;
-        }
-      } catch (error) {
+      if (result.success) {
+        successCount++;
+      } else {
         errorCount++;
       }
     }
@@ -1088,12 +634,30 @@ export class MatchingOverviewDialogComponent implements OnInit {
       this.snackBar.open(`Successfully linked ${successCount} transactions`, '', { duration: 2000 });
     }
 
-    // Reload data
+    this.batchSelectedBankIds.clear();
     await this.loadData();
     this.clearSelection();
   }
 
-  close() {
+  async autoMatchAll(): Promise<void> {
+    const { successCount, errorCount } = await this.matchingService.autoMatchAll(this.data, this.selectedPlatform);
+
+    if (successCount === 0 && errorCount === 0) {
+      this.snackBar.open('No high-confidence matches found', '', { duration: 2000 });
+      return;
+    }
+
+    if (errorCount > 0) {
+      this.snackBar.open(`Linked ${successCount}, ${errorCount} failed`, '', { duration: 3000 });
+    } else {
+      this.snackBar.open(`Successfully linked ${successCount} transactions`, '', { duration: 2000 });
+    }
+
+    await this.loadData();
+    this.clearSelection();
+  }
+
+  close(): void {
     this.dialogRef.close();
   }
 }
