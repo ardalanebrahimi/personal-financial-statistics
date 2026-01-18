@@ -22,3 +22,7 @@ src/data/
 *.db-shm
 .encryption-key
 src/server/.env
+
+# Personal financial export files - NEVER commit
+Paypal/
+excels/
